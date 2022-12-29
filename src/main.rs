@@ -1,47 +1,17 @@
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 
-use actix_web::http::StatusCode;
-use actix_web::{error, App, HttpResponse, HttpServer};
 use clap::Parser;
-use derive_more::Display;
-use log::info;
 use serde::{Deserialize, Serialize};
 
 use auth_service_api::client::AuthService;
 use tokio::sync::broadcast;
 
+mod db_types;
+mod request;
+mod response;
 mod handlers;
 mod utils;
-
-#[derive(Clone, Debug, Serialize, Deserialize, Display)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum AppError {
-    DecodeError,
-    InternalServerError,
-    Unauthorized,
-    BadRequest,
-    NotFound,
-    InvalidBase64,
-    Unknown,
-}
-
-impl error::ResponseError for AppError {
-    fn error_response(&self) -> HttpResponse {
-        HttpResponse::build(self.status_code()).json(self)
-    }
-    fn status_code(&self) -> StatusCode {
-        match *self {
-            AppError::DecodeError => StatusCode::BAD_GATEWAY,
-            AppError::InternalServerError => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::Unauthorized => StatusCode::UNAUTHORIZED,
-            AppError::BadRequest => StatusCode::BAD_REQUEST,
-            AppError::InvalidBase64 => StatusCode::BAD_REQUEST,
-            AppError::NotFound => StatusCode::NOT_FOUND,
-            AppError::Unknown => StatusCode::INTERNAL_SERVER_ERROR,
-        }
-    }
-}
 
 #[derive(Parser, Debug, Clone)]
 #[clap(about, version, author)]
@@ -56,7 +26,8 @@ struct Opts {
 
 #[derive(Debug, Clone)]
 pub struct AppData {
-    pub task_insert_tx : broadcast::Sender<response::Task>,
+    pub live_task_update_tx: broadcast::Sender<response::LiveTaskUpdate>,
+    pub finished_task_update_tx: broadcast::Sender<response::Task>,
     pub auth_service: AuthService,
 }
 
