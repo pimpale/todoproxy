@@ -1,34 +1,66 @@
-use super::response::*;
+use super::AppData;
+use actix_web::{http::StatusCode, web, HttpResponse, Responder, ResponseError};
+use derive_more::Display;
+use serde::{Deserialize, Serialize};
+use todoproxy_api::response::Info;
 
-use actix_web::{web, Responder};
+#[derive(Clone, Debug, Serialize, Deserialize, Display)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AppError {
+    DecodeError,
+    InternalServerError,
+    Unauthorized,
+    BadRequest,
+    NotFound,
+    InvalidBase64,
+    Unknown,
+}
 
+impl ResponseError for AppError {
+    fn error_response(&self) -> HttpResponse {
+        HttpResponse::build(self.status_code()).json(self)
+    }
+    fn status_code(&self) -> StatusCode {
+        match *self {
+            AppError::DecodeError => StatusCode::BAD_GATEWAY,
+            AppError::InternalServerError => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Unauthorized => StatusCode::UNAUTHORIZED,
+            AppError::BadRequest => StatusCode::BAD_REQUEST,
+            AppError::InvalidBase64 => StatusCode::BAD_REQUEST,
+            AppError::NotFound => StatusCode::NOT_FOUND,
+            AppError::Unknown => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
 
-#[actix_web::post("/run_code")]
-pub async fn run_code(
-    req: web::Json<RunCodeRequest>,
-    data: web::Data<PythonboxData>,
-) -> Result<impl Responder, AppError> {
-    // convert base64 tar gz into bytes
-    let content = base64::decode(req.base_64_tar_gz.as_str()).map_err(|_| {
-        error!(target: "pythonbox::run_code", "Invalid Base 64, refusing request");
-        AppError::InvalidBase64
-    })?;
+pub fn report_postgres_err(e: tokio_postgres::Error) -> AppError {
+    log::error!(target:"todoproxy:postgres", "{}", e);
+    AppError::InternalServerError
+}
 
-    // max memory = 100MB
-    let max_memory_usage = 100 * 0x100000;
+pub fn report_pool_err(e: deadpool_postgres::PoolError) -> AppError {
+    log::error!(target:"todoproxy:deadpool", "{}", e);
+    AppError::InternalServerError
+}
 
-    let resp = docker::run_code(
-        content,
-        req.max_time_s,
-        max_memory_usage,
-        data.image.clone(),
-        data.docker.clone(),
-    )
-    .await?;
+// respond with info about stuff
+#[actix_web::post("/info")]
+pub async fn info() -> Result<impl Responder, AppError> {
+    return Ok(web::Json(Info {
+        service: String::from(super::SERVICE),
+        version_major: super::VERSION_MAJOR,
+        version_minor: super::VERSION_MINOR,
+        version_rev: super::VERSION_REV,
+    }));
+}
 
-    return Ok(web::Json(RunCodeResponse {
-        stdout: base64::encode(resp.stdout),
-        stderr: base64::encode(resp.stderr),
-        exit_code: resp.exit_code,
+// start websocket connection
+#[actix_web::get("/ws")]
+pub async fn ws() -> Result<impl Responder, AppError> {
+    return Ok(web::Json(Info {
+        service: String::from(super::SERVICE),
+        version_major: super::VERSION_MAJOR,
+        version_minor: super::VERSION_MINOR,
+        version_rev: super::VERSION_REV,
     }));
 }

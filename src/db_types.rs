@@ -1,12 +1,4 @@
-use serde::{Deserialize, Serialize};
-use derive_more::Display;
-
-#[derive(Clone, Debug, Serialize, Deserialize, Display)]
-pub enum TaskStatus {
-    Obsoleted,
-    Succeeded,
-    Failed
-}
+use todoproxy_api::TaskStatus;
 
 #[derive(Clone, Debug)]
 pub struct LiveTask {
@@ -14,7 +6,7 @@ pub struct LiveTask {
     pub creation_time: i64,
     pub creator_user_id: i64,
     pub position: i64,
-    pub value: String
+    pub value: String,
 }
 
 #[derive(Clone, Debug)]

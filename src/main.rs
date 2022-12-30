@@ -1,17 +1,21 @@
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 
+use actix_web::{middleware, App, HttpServer};
 use clap::Parser;
-use serde::{Deserialize, Serialize};
 
 use auth_service_api::client::AuthService;
+use todoproxy_api::response::WebsocketServerUpdateMessage;
 use tokio::sync::broadcast;
 
 mod db_types;
-mod request;
-mod response;
 mod handlers;
 mod utils;
+
+static SERVICE: &'static str = "todoproxy";
+static VERSION_MAJOR: i64 = 0;
+static VERSION_MINOR: i64 = 0;
+static VERSION_REV: i64 = 1;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(about, version, author)]
@@ -24,18 +28,22 @@ struct Opts {
     auth_service_url: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppData {
-    pub live_task_update_tx: broadcast::Sender<response::LiveTaskUpdate>,
-    pub finished_task_update_tx: broadcast::Sender<response::Task>,
+    pub task_update_tx: broadcast::Sender<WebsocketServerUpdateMessage>,
     pub auth_service: AuthService,
+    pub pool: deadpool_postgres::Pool,
 }
 
-#[tokio::main]
+#[tokio::main(flavor="current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     env_logger::init();
 
-    let Opts { auth_service_url, port, database_url } = Opts::parse();
+    let Opts {
+        auth_service_url,
+        port,
+        database_url,
+    } = Opts::parse();
 
     // connect to postgres
     let postgres_config = tokio_postgres::Config::from_str(&database_url).map_err(|e| {
@@ -55,24 +63,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let pool = deadpool_postgres::Pool::builder(mgr)
         .max_size(16)
         .build()
-        .map_err(|e| {
-        log::error!(target:"todoproxy::deadpool", "couldn't build database connection pool: {}", e);
-        e
-        })?;
-    log::info!(target:"todoproxy::deadpool", "built database connection pool");
+        .map_err(|e| { log::error!(target:"todoproxy::deadpool", "couldn't build database connection pool: {}", e); e })?;
 
+    log::info!(target:"todoproxy::deadpool", "built database connection pool");
 
     // open connection to auth service
     let auth_service = AuthService::new(&auth_service_url).await;
     log::info!(target:"todoproxy::deadpool", "connected to auth service");
 
+    // broadcast all updates
+    // max buffer size of 1000 for now, because I think
+    let (task_update_tx, _) = broadcast::channel(1000);
 
     // start server
-    let data = AppData { image, auth_service };
+    let data = AppData {
+        task_update_tx,
+        auth_service,
+        pool,
+    };
+
     HttpServer::new(move || {
         App::new()
             .app_data(actix_web::web::Data::new(data.clone()))
-            .service(handlers::run_code)
+            // handle info query
+            .service(handlers::info)
+            // handle ws connection
+            .service(handlers::ws)
+            // enable logger
+            .wrap(middleware::Logger::default())
     })
     .bind((Ipv4Addr::LOCALHOST, port))?
     .run()
