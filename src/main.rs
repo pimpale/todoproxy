@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 
-use actix_web::{middleware, App, HttpServer};
+use actix_web::{middleware, web, App, HttpServer};
 use clap::Parser;
 
 use auth_service_api::client::AuthService;
@@ -26,21 +26,26 @@ struct Opts {
     database_url: String,
     #[clap(long)]
     auth_service_url: String,
+    #[clap(long)]
+    site_external_url: String,
 }
 
 #[derive(Clone)]
 pub struct AppData {
     pub task_update_tx: broadcast::Sender<WebsocketServerUpdateMessage>,
     pub auth_service: AuthService,
+    pub site_external_url: String,
     pub pool: deadpool_postgres::Pool,
 }
 
-#[tokio::main(flavor="current_thread")]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     env_logger::init();
 
     let Opts {
         auth_service_url,
+
+        site_external_url,
         port,
         database_url,
     } = Opts::parse();
@@ -79,18 +84,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let data = AppData {
         task_update_tx,
         auth_service,
+        site_external_url,
         pool,
     };
 
     HttpServer::new(move || {
         App::new()
-            .app_data(actix_web::web::Data::new(data.clone()))
-            // handle info query
-            .service(handlers::info)
-            // handle ws connection
-            .service(handlers::ws)
             // enable logger
             .wrap(middleware::Logger::default())
+            // add data
+            .app_data(actix_web::web::Data::new(data.clone()))
+            // handle info query
+            .service(web::resource("/info").route(web::get().to(handlers::info)))
+            // handle ws connection
+            .service(web::resource("/ws").route(web::get().to(handlers::ws)))
     })
     .bind((Ipv4Addr::LOCALHOST, port))?
     .run()

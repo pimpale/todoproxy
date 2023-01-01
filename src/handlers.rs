@@ -1,10 +1,15 @@
-use std::{time::{Duration, Instant}};
+use std::time::{Duration, Instant};
 
 use super::AppData;
-use actix_web::{http::StatusCode, web, HttpResponse, Responder, ResponseError, Error, HttpRequest};
+use actix_web::{
+    http::StatusCode, rt, web, Error, HttpRequest, HttpResponse, Responder, ResponseError,
+};
 use actix_ws::Message;
 use derive_more::Display;
-use futures_util::{future::{self, Either}, StreamExt};
+use futures_util::{
+    future::{self, Either},
+    StreamExt,
+};
 use serde::{Deserialize, Serialize};
 use todoproxy_api::response::Info;
 use tokio::time::interval;
@@ -39,17 +44,16 @@ impl ResponseError for AppError {
 }
 
 pub fn report_postgres_err(e: tokio_postgres::Error) -> AppError {
-    log::error!(target:"todoproxy:postgres", "{}", e);
+    log::error!("{}", e);
     AppError::InternalServerError
 }
 
 pub fn report_pool_err(e: deadpool_postgres::PoolError) -> AppError {
-    log::error!(target:"todoproxy:deadpool", "{}", e);
+    log::error!("{}", e);
     AppError::InternalServerError
 }
 
 // respond with info about stuff
-#[actix_web::post("/info")]
 pub async fn info() -> Result<impl Responder, AppError> {
     return Ok(web::Json(Info {
         service: String::from(super::SERVICE),
@@ -60,14 +64,16 @@ pub async fn info() -> Result<impl Responder, AppError> {
 }
 
 // start websocket connection
-#[actix_web::get("/ws")]
-pub async fn ws(req: HttpRequest, stream: web::Payload) -> Result<impl Responder, Error> {
+pub async fn ws(
+    data: web::Data<AppData>,
+    req: HttpRequest,
+    stream: web::Payload,
+) -> Result<impl Responder, Error> {
     let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
     // spawn websocket handler (and don't await it) so that the response is returned immediately
-    tokio::spawn(handler::echo_ws(session, msg_stream));
+    rt::spawn(manage_updates_ws(data, session, msg_stream));
     Ok(res)
 }
-
 
 /// How often heartbeat pings are sent.
 ///
@@ -77,9 +83,16 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long before lack of client response causes a timeout.
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
+pub enum ConnectionState {
+    Unauthenticated,
+    Authenticated {
+    }
+}
+
 /// Echo text & binary messages received from the client, respond to ping messages, and monitor
 /// connection health to detect network issues and free up resources.
-pub async fn echo_heartbeat_ws(
+pub async fn manage_updates_ws(
+    data: web::Data<AppData>,
     mut session: actix_ws::Session,
     mut msg_stream: actix_ws::MessageStream,
 ) {
@@ -126,7 +139,6 @@ pub async fn echo_heartbeat_ws(
                     Message::Continuation(_) => {
                         log::warn!("no support for continuation frames");
                     }
-
                     // no-op; ignore
                     Message::Nop => {}
                 };
