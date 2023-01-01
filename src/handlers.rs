@@ -4,7 +4,7 @@ use super::AppData;
 use actix_web::{
     http::StatusCode, rt, web, Error, HttpRequest, HttpResponse, Responder, ResponseError,
 };
-use actix_ws::Message;
+use actix_ws::{CloseCode, CloseReason, Message};
 use derive_more::Display;
 use futures_util::{
     future::{self, Either},
@@ -85,8 +85,7 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub enum ConnectionState {
     Unauthenticated,
-    Authenticated {
-    }
+    Authenticated {},
 }
 
 /// Echo text & binary messages received from the client, respond to ping messages, and monitor
@@ -116,28 +115,37 @@ pub async fn manage_updates_ws(
 
                 match msg {
                     Message::Text(text) => {
-                        session.text(text).await.unwrap();
+                       let result = session.text(text).await;
+                       match result {
+                           Ok(()) => {},
+                           Err(e) => {
+CloseReason {
+                            code: CloseCode::Unsupported,
+                            description: Some(String::from("Only text supported")),
+                        }
+                         }
                     }
-
-                    Message::Binary(bin) => {
-                        session.binary(bin).await.unwrap();
+                    Message::Binary(_) => {
+                        break Some(CloseReason {
+                            code: CloseCode::Unsupported,
+                            description: Some(String::from("Only text supported")),
+                        });
                     }
-
                     Message::Close(reason) => {
                         break reason;
                     }
-
                     Message::Ping(bytes) => {
                         last_heartbeat = Instant::now();
                         let _ = session.pong(&bytes).await;
                     }
-
                     Message::Pong(_) => {
                         last_heartbeat = Instant::now();
                     }
-
                     Message::Continuation(_) => {
-                        log::warn!("no support for continuation frames");
+                        break Some(CloseReason {
+                            code: CloseCode::Unsupported,
+                            description: Some(String::from("No support for continuation frame.")),
+                        });
                     }
                     // no-op; ignore
                     Message::Nop => {}
