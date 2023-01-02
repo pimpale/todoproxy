@@ -115,15 +115,16 @@ pub async fn manage_updates_ws(
 
                 match msg {
                     Message::Text(text) => {
-                       let result = session.text(text).await;
-                       match result {
-                           Ok(()) => {},
-                           Err(e) => {
-CloseReason {
-                            code: CloseCode::Unsupported,
-                            description: Some(String::from("Only text supported")),
-                        }
-                         }
+                        let result = session.text(text).await;
+                        match result {
+                            Ok(()) => {}
+                            Err(e) => {
+                                break Some(CloseReason {
+                                    code: CloseCode::Unsupported,
+                                    description: Some(String::from("Only text supported")),
+                                })
+                            }
+                        };
                     }
                     Message::Binary(_) => {
                         break Some(CloseReason {
