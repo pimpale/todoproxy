@@ -249,11 +249,11 @@ dependencies = [
 [[package]]
 name = "auth-service-api"
 version = "0.7.7"
-source = "git+https://github.com/innexgo/auth-service-api#e87db4e2a6c9df61d2442f5fb30e21c1745f1d27"
+source = "git+https://github.com/innexgo/auth-service-api#ea7a6d76a24bd4a0bd697e7b2e070caa5151406c"
 dependencies = [
+ "derive_more",
  "reqwest",
  "serde",
- "strum",
  "tokio",
 ]
 
@@ -1371,12 +1371,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustversion"
-version = "1.0.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5583e89e108996506031660fe09baa5011b9dd0341b89029313006d1fb508d70"
-
-[[package]]
 name = "ryu"
 version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1549,28 +1543,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
 
 [[package]]
-name = "strum"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "063e6045c0e62079840579a7e47a355ae92f60eb74daaf156fb1e84ba164e63f"
-dependencies = [
- "strum_macros",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.24.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e385be0d24f186b4ce2f9982191e7101bb737312ad61c1f2f984f34bcf85d59"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn",
-]
-
-[[package]]
 name = "subtle"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1670,6 +1642,7 @@ dependencies = [
  "todoproxy-api",
  "tokio",
  "tokio-postgres",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -1745,6 +1718,18 @@ dependencies = [
  "postgres-protocol",
  "postgres-types",
  "socket2",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "tokio-stream"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d660770404473ccd7bc9f8b28494a811bc18542b915c0855c51e8f419d5223ce"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
  "tokio",
  "tokio-util",
 ]

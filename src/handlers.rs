@@ -1,18 +1,14 @@
-use std::time::{Duration, Instant};
-
+use super::task_updates;
 use super::AppData;
+
 use actix_web::{
     http::StatusCode, rt, web, Error, HttpRequest, HttpResponse, Responder, ResponseError,
 };
-use actix_ws::{CloseCode, CloseReason, Message};
+use auth_service_api::response::{AuthError, User};
 use derive_more::Display;
-use futures_util::{
-    future::{self, Either},
-    StreamExt,
-};
 use serde::{Deserialize, Serialize};
+
 use todoproxy_api::response::Info;
-use tokio::time::interval;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Display)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -22,7 +18,6 @@ pub enum AppError {
     Unauthorized,
     BadRequest,
     NotFound,
-    InvalidBase64,
     Unknown,
 }
 
@@ -36,21 +31,48 @@ impl ResponseError for AppError {
             AppError::InternalServerError => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::BadRequest => StatusCode::BAD_REQUEST,
-            AppError::InvalidBase64 => StatusCode::BAD_REQUEST,
             AppError::NotFound => StatusCode::NOT_FOUND,
             AppError::Unknown => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
 
-pub fn report_postgres_err(e: tokio_postgres::Error) -> AppError {
+fn report_postgres_err(e: tokio_postgres::Error) -> AppError {
     log::error!("{}", e);
     AppError::InternalServerError
 }
 
-pub fn report_pool_err(e: deadpool_postgres::PoolError) -> AppError {
+fn report_pool_err(e: deadpool_postgres::PoolError) -> AppError {
     log::error!("{}", e);
     AppError::InternalServerError
+}
+
+fn report_auth_err(e: AuthError) -> AppError {
+    match e {
+        AuthError::ApiKeyNonexistent => AppError::Unauthorized,
+        AuthError::ApiKeyUnauthorized => AppError::Unauthorized,
+        c => {
+            let ae = match c {
+                AuthError::InternalServerError => AppError::InternalServerError,
+                AuthError::MethodNotAllowed => AppError::InternalServerError,
+                AuthError::BadRequest => AppError::InternalServerError,
+                AuthError::Network => AppError::InternalServerError,
+                _ => AppError::Unknown,
+            };
+            log::error!("auth: {}", c);
+            ae
+        }
+    }
+}
+
+pub async fn get_user_if_api_key_valid(
+    auth_service: &auth_service_api::client::AuthService,
+    api_key: String,
+) -> Result<User, AppError> {
+    auth_service
+        .get_user_by_api_key_if_valid(api_key)
+        .await
+        .map_err(report_auth_err)
 }
 
 // respond with info about stuff
@@ -64,123 +86,13 @@ pub async fn info() -> Result<impl Responder, AppError> {
 }
 
 // start websocket connection
-pub async fn ws(
+pub async fn ws_task_updates(
     data: web::Data<AppData>,
     req: HttpRequest,
     stream: web::Payload,
 ) -> Result<impl Responder, Error> {
     let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
     // spawn websocket handler (and don't await it) so that the response is returned immediately
-    rt::spawn(manage_updates_ws(data, session, msg_stream));
+    rt::spawn(task_updates::manage_updates_ws(data, session, msg_stream));
     Ok(res)
-}
-
-/// How often heartbeat pings are sent.
-///
-/// Should be half (or less) of the acceptable client timeout.
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-
-/// How long before lack of client response causes a timeout.
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
-
-pub enum ConnectionState {
-    Unauthenticated,
-    Authenticated {},
-}
-
-/// Echo text & binary messages received from the client, respond to ping messages, and monitor
-/// connection health to detect network issues and free up resources.
-pub async fn manage_updates_ws(
-    data: web::Data<AppData>,
-    mut session: actix_ws::Session,
-    mut msg_stream: actix_ws::MessageStream,
-) {
-    log::info!("connected");
-
-    let mut last_heartbeat = Instant::now();
-    let mut interval = interval(HEARTBEAT_INTERVAL);
-
-    let reason = loop {
-        // create "next client timeout check" future
-        let tick = interval.tick();
-        // required for select()
-        tokio::pin!(tick);
-
-        // waits for either `msg_stream` to receive a message from the client or the heartbeat
-        // interval timer to tick, yielding the value of whichever one is ready first
-        match future::select(msg_stream.next(), tick).await {
-            // received message from WebSocket client
-            Either::Left((Some(Ok(msg)), _)) => {
-                log::debug!("msg: {msg:?}");
-
-                match msg {
-                    Message::Text(text) => {
-                        let result = session.text(text).await;
-                        match result {
-                            Ok(()) => {}
-                            Err(e) => {
-                                break Some(CloseReason {
-                                    code: CloseCode::Unsupported,
-                                    description: Some(String::from("Only text supported")),
-                                })
-                            }
-                        };
-                    }
-                    Message::Binary(_) => {
-                        break Some(CloseReason {
-                            code: CloseCode::Unsupported,
-                            description: Some(String::from("Only text supported")),
-                        });
-                    }
-                    Message::Close(reason) => {
-                        break reason;
-                    }
-                    Message::Ping(bytes) => {
-                        last_heartbeat = Instant::now();
-                        let _ = session.pong(&bytes).await;
-                    }
-                    Message::Pong(_) => {
-                        last_heartbeat = Instant::now();
-                    }
-                    Message::Continuation(_) => {
-                        break Some(CloseReason {
-                            code: CloseCode::Unsupported,
-                            description: Some(String::from("No support for continuation frame.")),
-                        });
-                    }
-                    // no-op; ignore
-                    Message::Nop => {}
-                };
-            }
-
-            // client WebSocket stream error
-            Either::Left((Some(Err(err)), _)) => {
-                log::error!("{}", err);
-                break None;
-            }
-
-            // client WebSocket stream ended
-            Either::Left((None, _)) => break None,
-
-            // heartbeat interval ticked
-            Either::Right((_inst, _)) => {
-                // if no heartbeat ping/pong received recently, close the connection
-                if Instant::now().duration_since(last_heartbeat) > CLIENT_TIMEOUT {
-                    log::info!(
-                        "client has not sent heartbeat in over {CLIENT_TIMEOUT:?}; disconnecting"
-                    );
-
-                    break None;
-                }
-
-                // send heartbeat ping
-                let _ = session.ping(b"").await;
-            }
-        }
-    };
-
-    // attempt to close connection gracefully
-    let _ = session.close(reason).await;
-
-    log::info!("disconnected");
 }

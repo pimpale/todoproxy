@@ -10,6 +10,7 @@ use tokio::sync::broadcast;
 
 mod db_types;
 mod handlers;
+mod task_updates;
 mod utils;
 
 static SERVICE: &'static str = "todoproxy";
@@ -44,7 +45,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
     let Opts {
         auth_service_url,
-
         site_external_url,
         port,
         database_url,
@@ -97,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
             // handle info query
             .service(web::resource("/info").route(web::get().to(handlers::info)))
             // handle ws connection
-            .service(web::resource("/ws").route(web::get().to(handlers::ws)))
+            .service(web::resource("/ws/task_updates").route(web::get().to(handlers::ws_task_updates)))
     })
     .bind((Ipv4Addr::LOCALHOST, port))?
     .run()
