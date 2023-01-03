@@ -1,19 +1,18 @@
-use todoproxy_api::TaskStatus;
-
+// the order of the operations in the database is the canonical order
 #[derive(Clone, Debug)]
-pub struct LiveTask {
-    pub live_task_id: i64,
+pub struct Operation {
+    pub operation_id: i64,
     pub creation_time: i64,
     pub creator_user_id: i64,
-    pub position: i64,
-    pub value: String,
+    pub jsonval: String,
 }
 
+// a checkpoint may summarize the preceeding operations
+// it may also be directly imported from habitica
 #[derive(Clone, Debug)]
-pub struct FinishedTask {
-    pub finished_task_id: i64,
+pub struct Checkpoint {
+    pub checkpoint_id: i64,
     pub creation_time: i64,
     pub creator_user_id: i64,
-    pub value: String,
-    pub status: TaskStatus,
+    pub jsonval: String,
 }

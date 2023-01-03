@@ -21,3 +21,4 @@ todoproxy-api = {version = "*", git = "https://github.com/pimpale/todoproxy-api"
 derive_more = "0.99.17"
 actix-ws = "0.2.5"
 tokio-stream = { version = "0.1.11", features = ["sync"] }
+dashmap = "5.4.0"

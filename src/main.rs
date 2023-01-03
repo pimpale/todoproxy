@@ -1,17 +1,22 @@
-use std::net::Ipv4Addr;
+#![feature(try_blocks)]
 use std::str::FromStr;
+use std::{net::Ipv4Addr, sync::Arc};
 
 use actix_web::{middleware, web, App, HttpServer};
 use clap::Parser;
 
 use auth_service_api::client::AuthService;
-use todoproxy_api::response::WebsocketServerUpdateMessage;
+use dashmap::DashMap;
+use todoproxy_api::response::{ServerStateCheckpoint, WebsocketServerUpdateMessage};
 use tokio::sync::broadcast;
 
 mod db_types;
 mod handlers;
 mod task_updates;
 mod utils;
+
+mod checkpoint_service;
+mod operation_service;
 
 static SERVICE: &'static str = "todoproxy";
 static VERSION_MAJOR: i64 = 0;
@@ -31,9 +36,16 @@ struct Opts {
     site_external_url: String,
 }
 
+pub struct PerUserWorkerData {
+    // websockets send to this channel when they receive an event
+    pub channel: broadcast::Sender<WebsocketServerUpdateMessage>,
+    // snapshot at the current state of the channel
+    pub snapshot: ServerStateCheckpoint,
+}
+
 #[derive(Clone)]
 pub struct AppData {
-    pub task_update_tx: broadcast::Sender<WebsocketServerUpdateMessage>,
+    pub user_worker_data: Arc<DashMap<i64, PerUserWorkerData>>,
     pub auth_service: AuthService,
     pub site_external_url: String,
     pub pool: deadpool_postgres::Pool,
@@ -76,13 +88,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let auth_service = AuthService::new(&auth_service_url).await;
     log::info!(target:"todoproxy::deadpool", "connected to auth service");
 
-    // broadcast all updates
-    // max buffer size of 1000 for now, because I think
-    let (task_update_tx, _) = broadcast::channel(1000);
+    let user_worker_data = Arc::new(DashMap::new());
 
     // start server
     let data = AppData {
-        task_update_tx,
+        user_worker_data,
         auth_service,
         site_external_url,
         pool,
@@ -97,7 +107,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
             // handle info query
             .service(web::resource("/info").route(web::get().to(handlers::info)))
             // handle ws connection
-            .service(web::resource("/ws/task_updates").route(web::get().to(handlers::ws_task_updates)))
+            .service(
+                web::resource("/ws/task_updates").route(web::get().to(handlers::ws_task_updates)),
+            )
     })
     .bind((Ipv4Addr::LOCALHOST, port))?
     .run()

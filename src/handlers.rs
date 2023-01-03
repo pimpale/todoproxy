@@ -37,17 +37,17 @@ impl ResponseError for AppError {
     }
 }
 
-fn report_postgres_err(e: tokio_postgres::Error) -> AppError {
+pub fn report_postgres_err(e: tokio_postgres::Error) -> AppError {
     log::error!("{}", e);
     AppError::InternalServerError
 }
 
-fn report_pool_err(e: deadpool_postgres::PoolError) -> AppError {
+pub fn report_pool_err(e: deadpool_postgres::PoolError) -> AppError {
     log::error!("{}", e);
     AppError::InternalServerError
 }
 
-fn report_auth_err(e: AuthError) -> AppError {
+pub fn report_auth_err(e: AuthError) -> AppError {
     match e {
         AuthError::ApiKeyNonexistent => AppError::Unauthorized,
         AuthError::ApiKeyUnauthorized => AppError::Unauthorized,
