@@ -47,6 +47,18 @@ pub fn report_pool_err(e: deadpool_postgres::PoolError) -> AppError {
     AppError::InternalServerError
 }
 
+pub fn report_internal_serde_error(e: serde_json::Error) -> AppError {
+    log::error!("{}", e);
+    AppError::InternalServerError
+}
+
+
+pub fn report_serde_error(e: serde_json::Error) -> AppError {
+    log::info!("{}", e);
+    AppError::DecodeError
+}
+
+
 pub fn report_auth_err(e: AuthError) -> AppError {
     match e {
         AuthError::ApiKeyNonexistent => AppError::Unauthorized,

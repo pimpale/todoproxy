@@ -446,19 +446,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dashmap"
-version = "5.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "907076dfda823b0b36d2a1bb5f90c96660a5bbcd7729e10727f07858f22c4edc"
-dependencies = [
- "cfg-if",
- "hashbrown",
- "lock_api",
- "once_cell",
- "parking_lot_core",
-]
-
-[[package]]
 name = "deadpool"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1645,7 +1632,6 @@ dependencies = [
  "actix-ws",
  "auth-service-api",
  "clap",
- "dashmap",
  "deadpool-postgres",
  "derive_more",
  "env_logger",
@@ -1662,7 +1648,7 @@ dependencies = [
 [[package]]
 name = "todoproxy-api"
 version = "0.0.1"
-source = "git+https://github.com/pimpale/todoproxy-api#086eab30de8cb9ac1bc2a1f3e05c1e487c5e11bd"
+source = "git+https://github.com/pimpale/todoproxy-api#db2aeaf40bd30b5202ad8e49ed93588537d15b43"
 dependencies = [
  "derive_more",
  "num-derive",

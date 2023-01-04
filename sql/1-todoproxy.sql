@@ -17,6 +17,16 @@ create table checkpoint(
   jsonval text not null
 );
 
+create view recent_checkpoint_by_user_id as
+  select c.* from checkpoint c
+  inner join (
+    select max(checkpoint_id) id 
+    from checkpoint
+    group by creator_user_id
+  ) maxids
+  on maxids.id = c.checkpoint_id;
+
+
 
 drop table if exists operation cascade;
 create table operation(

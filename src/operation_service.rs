@@ -8,7 +8,7 @@ impl From<tokio_postgres::row::Row> for Operation {
         Operation {
             operation_id: row.get("operation_id"),
             creation_time: row.get("creation_time"),
-            creator_user_id: row.get("creator_user_id"),
+            checkpoint_id: row.get("checkpoint_id"),
             jsonval: row.get("jsonval"),
         }
     }
@@ -16,7 +16,7 @@ impl From<tokio_postgres::row::Row> for Operation {
 
 pub async fn add(
     con: &mut impl GenericClient,
-    creator_user_id: i64,
+    checkpoint_id: i64,
     op: WebsocketServerUpdateMessage,
 ) -> Result<Operation, tokio_postgres::Error> {
     let jsonval = serde_json::to_string(&op).unwrap();
@@ -24,13 +24,13 @@ pub async fn add(
         .query_one(
             "INSERT INTO
              operation(
-                 creator_user_id,
+                 checkpoint_id,
                  jsonval
              )
              VALUES($1, $2)
              RETURNING operation_id, creation_time
             ",
-            &[&creator_user_id, &jsonval],
+            &[&checkpoint_id, &jsonval],
         )
         .await?;
 
@@ -38,7 +38,7 @@ pub async fn add(
     Ok(Operation {
         operation_id: row.get(0),
         creation_time: row.get(1),
-        creator_user_id,
+        checkpoint_id,
         jsonval,
     })
 }
@@ -54,5 +54,26 @@ pub async fn get_by_operation_id(
         )
         .await?
         .map(|x| x.into());
+    Ok(result)
+}
+
+pub async fn get_operations_since(
+    con: &mut impl GenericClient,
+    checkpoint_id: i64,
+) -> Result<Vec<Operation>, tokio_postgres::Error> {
+    let result = con
+        .query(
+            "SELECT *
+             FROM operation
+             WHERE checkpoint_id = $1
+             ORDER BY operation_id
+            ",
+            &[&checkpoint_id],
+        )
+        .await?
+        .into_iter()
+        .map(|x| x.into())
+        .collect();
+
     Ok(result)
 }

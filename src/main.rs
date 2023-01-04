@@ -1,14 +1,16 @@
 #![feature(try_blocks)]
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::{net::Ipv4Addr, sync::Arc};
 
 use actix_web::{middleware, web, App, HttpServer};
+use auth_service_api::response::User;
 use clap::Parser;
 
 use auth_service_api::client::AuthService;
-use dashmap::DashMap;
 use todoproxy_api::response::{ServerStateCheckpoint, WebsocketServerUpdateMessage};
 use tokio::sync::broadcast;
+use tokio::sync::Mutex;
 
 mod db_types;
 mod handlers;
@@ -36,16 +38,21 @@ struct Opts {
     site_external_url: String,
 }
 
+#[derive(Clone)]
 pub struct PerUserWorkerData {
+    // user
+    pub user: User,
     // websockets send to this channel when they receive an event
-    pub channel: broadcast::Sender<WebsocketServerUpdateMessage>,
+    pub updates_tx: broadcast::Sender<db_types::Operation>,
     // snapshot at the current state of the channel
     pub snapshot: ServerStateCheckpoint,
+    // id of most recent update
+    pub most_recent_operation_id: Option<i64>,
 }
 
 #[derive(Clone)]
 pub struct AppData {
-    pub user_worker_data: Arc<DashMap<i64, PerUserWorkerData>>,
+    pub user_worker_data: Arc<Mutex<HashMap<i64, PerUserWorkerData>>>,
     pub auth_service: AuthService,
     pub site_external_url: String,
     pub pool: deadpool_postgres::Pool,
@@ -88,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let auth_service = AuthService::new(&auth_service_url).await;
     log::info!(target:"todoproxy::deadpool", "connected to auth service");
 
-    let user_worker_data = Arc::new(DashMap::new());
+    let user_worker_data = Arc::new(Mutex::new(HashMap::new()));
 
     // start server
     let data = AppData {
