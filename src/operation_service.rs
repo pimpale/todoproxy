@@ -1,5 +1,5 @@
 use super::db_types::*;
-use todoproxy_api::response::WebsocketServerUpdateMessage;
+use todoproxy_api::WebsocketOp;
 use tokio_postgres::GenericClient;
 
 impl From<tokio_postgres::row::Row> for Operation {
@@ -17,7 +17,7 @@ impl From<tokio_postgres::row::Row> for Operation {
 pub async fn add(
     con: &mut impl GenericClient,
     checkpoint_id: i64,
-    op: WebsocketServerUpdateMessage,
+    op: WebsocketOp,
 ) -> Result<Operation, tokio_postgres::Error> {
     let jsonval = serde_json::to_string(&op).unwrap();
     let row = con

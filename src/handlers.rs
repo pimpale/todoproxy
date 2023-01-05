@@ -8,7 +8,7 @@ use auth_service_api::response::{AuthError, User};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 
-use todoproxy_api::response::Info;
+use todoproxy_api::response;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Display)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -52,12 +52,10 @@ pub fn report_internal_serde_error(e: serde_json::Error) -> AppError {
     AppError::InternalServerError
 }
 
-
 pub fn report_serde_error(e: serde_json::Error) -> AppError {
     log::info!("{}", e);
     AppError::DecodeError
 }
-
 
 pub fn report_auth_err(e: AuthError) -> AppError {
     match e {
@@ -89,7 +87,7 @@ pub async fn get_user_if_api_key_valid(
 
 // respond with info about stuff
 pub async fn info() -> Result<impl Responder, AppError> {
-    return Ok(web::Json(Info {
+    return Ok(web::Json(response::Info {
         service: String::from(super::SERVICE),
         version_major: super::VERSION_MAJOR,
         version_minor: super::VERSION_MINOR,

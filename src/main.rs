@@ -8,7 +8,7 @@ use auth_service_api::response::User;
 use clap::Parser;
 
 use auth_service_api::client::AuthService;
-use todoproxy_api::response::{ServerStateCheckpoint, WebsocketServerUpdateMessage};
+use todoproxy_api::{StateSnapshot, WebsocketOp};
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 
@@ -38,21 +38,20 @@ struct Opts {
     site_external_url: String,
 }
 
-#[derive(Clone)]
 pub struct PerUserWorkerData {
     // user
     pub user: User,
     // websockets send to this channel when they receive an event
-    pub updates_tx: broadcast::Sender<db_types::Operation>,
+    pub updates_tx: broadcast::Sender<WebsocketOp>,
     // snapshot at the current state of the channel
-    pub snapshot: ServerStateCheckpoint,
-    // id of most recent update
-    pub most_recent_operation_id: Option<i64>,
+    pub snapshot: StateSnapshot,
+    // id of checkpoint
+    pub checkpoint_id: i64,
 }
 
 #[derive(Clone)]
 pub struct AppData {
-    pub user_worker_data: Arc<Mutex<HashMap<i64, PerUserWorkerData>>>,
+    pub user_worker_data: Arc<Mutex<HashMap<i64, Arc<Mutex<PerUserWorkerData>>>>>,
     pub auth_service: AuthService,
     pub site_external_url: String,
     pub pool: deadpool_postgres::Pool,

@@ -1,16 +1,15 @@
 use actix_web::web;
 use auth_service_api::response::User;
-use futures_util::{stream_select, StreamExt};
+use futures_util::{stream, stream_select, StreamExt};
 
 use actix_ws::{CloseCode, CloseReason, Message, ProtocolError};
 use std::{
-    collections::{hash_map::Entry, VecDeque},
+    collections::{hash_map::Entry, HashMap, VecDeque},
+    sync::Arc,
     time::{Duration, Instant},
 };
-use todoproxy_api::{
-    request::{WebsocketClientInitMessage, WebsocketClientOpMessage},
-    response::{FinishedTask, LiveTask, ServerStateCheckpoint, WebsocketServerUpdateMessage},
-};
+use todoproxy_api::{request, response, FinishedTask, LiveTask, StateSnapshot, WebsocketOp};
+use tokio::sync::{broadcast::Receiver, Mutex};
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream, IntervalStream};
 
 use crate::db_types;
@@ -45,7 +44,7 @@ pub async fn manage_updates_ws(
         // we received a message from the client
         ClientMessage(Result<Message, ProtocolError>),
         // we have to handle a broadcast from the server
-        ServerUpdate(Result<db_types::Operation, BroadcastStreamRecvError>),
+        ServerUpdate(Result<WebsocketOp, BroadcastStreamRecvError>),
     }
 
     let heartbeat_stream = IntervalStream::new(tokio::time::interval(HEARTBEAT_INTERVAL))
@@ -62,14 +61,13 @@ pub async fn manage_updates_ws(
                 match msg {
                     Message::Text(text) => {
                         // try to parse the json
-                        break serde_json::from_str::<WebsocketClientInitMessage>(&text).map_err(
-                            |e| {
+                        break serde_json::from_str::<request::WebsocketInitMessage>(&text)
+                            .map_err(|e| {
                                 Some(CloseReason {
                                     code: CloseCode::Error,
                                     description: Some(e.to_string()),
                                 })
-                            },
-                        );
+                            });
                     }
                     Message::Binary(_) => {
                         break Err(Some(CloseReason {
@@ -127,79 +125,88 @@ pub async fn manage_updates_ws(
     };
 
     // try block for app
-    let maybe_per_user_worker_data: Result<PerUserWorkerData, AppError> = try {
+    let maybe_per_user_worker_data: Result<
+        (
+            Arc<Mutex<PerUserWorkerData>>,
+            Receiver<WebsocketOp>,
+            StateSnapshot,
+        ),
+        AppError,
+    > = try {
         log::info!("trying to get user");
         let user = get_user_if_api_key_valid(&data.auth_service, init_msg.api_key).await?;
         log::info!("validated conenction for user {}", user.user_id);
 
-        // initialize connection
-        let con: &mut tokio_postgres::Client =
-            &mut *data.pool.get().await.map_err(handlers::report_pool_err)?;
+        let mut write_guard = data.user_worker_data.lock().await;
+        match write_guard.entry(user.user_id) {
+            Entry::Vacant(v) => {
+                // initialize connection
+                let con: &mut tokio_postgres::Client =
+                    &mut *data.pool.get().await.map_err(handlers::report_pool_err)?;
 
-        // get recent checkpoitn
-        let maybe_recent_checkpoint =
-            checkpoint_service::get_recent_by_user_id(&mut *con, user.user_id)
+                // get recent checkpoint
+                let preexisting_checkpoint =
+                    checkpoint_service::get_recent_by_user_id(&mut *con, user.user_id)
+                        .await
+                        .map_err(handlers::report_postgres_err)?;
+
+                // if it doesn't exist, create checkpoint
+                let recent_checkpoint = match preexisting_checkpoint {
+                    Some(x) => x,
+                    None => checkpoint_service::add(
+                        &mut *con,
+                        user.user_id,
+                        StateSnapshot {
+                            live: VecDeque::new(),
+                            finished: Vec::new(),
+                        },
+                    )
+                    .await
+                    .map_err(handlers::report_postgres_err)?,
+                };
+
+                // get all operations since this checkpoint
+                let operations_since_last_checkpoint = operation_service::get_operations_since(
+                    &mut *con,
+                    recent_checkpoint.checkpoint_id,
+                )
                 .await
                 .map_err(handlers::report_postgres_err)?;
 
-        // get all operations since this checkpoint (if it exists)
-        let operations_since_last_checkpoint = match maybe_recent_checkpoint {
-            Some(db_types::Checkpoint { checkpoint_id, .. }) => {
-                operation_service::get_operations_since(&mut *con, checkpoint_id)
-                    .await
-                    .map_err(handlers::report_postgres_err)?
-            }
-            None => vec![],
-        };
+                // create channel
+                let (updates_tx, updates_rx) = tokio::sync::broadcast::channel(1000);
 
-        let per_user_worker_data = {
-            let mut write_guard = data.user_worker_data.lock().await;
-            match write_guard.entry(user.user_id) {
-                Entry::Vacant(v) => {
-                    // create channel
-                    let (updates_tx, updates_rx) = tokio::sync::broadcast::channel(1000);
-                    // create snapshot from checkpoint
-                    let mut snapshot = match maybe_recent_checkpoint {
-                        Some(checkpoint) => {
-                            serde_json::from_str::<ServerStateCheckpoint>(&checkpoint.jsonval)
-                                .map_err(handlers::report_internal_serde_error)?
-                        }
-                        None => ServerStateCheckpoint {
-                            live: VecDeque::new(),
-                            finished: vec![],
-                        },
-                    };
+                // create snapshot from checkpoint
+                let mut snapshot = serde_json::from_str(&recent_checkpoint.jsonval)
+                    .map_err(handlers::report_internal_serde_error)?;
 
-                    let most_recent_operation_id = operations_since_last_checkpoint
-                        .last()
-                        .map(|x| x.operation_id);
-
-                    for x in operations_since_last_checkpoint {
-                        let op = serde_json::from_str::<WebsocketServerUpdateMessage>(&x.jsonval)
-                            .map_err(handlers::report_internal_serde_error)?;
-                        snapshot = apply_operation(snapshot, op);
-                    }
-
-                    let per_user_worker_data_ref = v.insert(PerUserWorkerData {
-                        updates_tx,
-                        snapshot,
-                        user,
-                        most_recent_operation_id,
-                    });
-
-                    // spawn tokio task to for
-                    //tokio::spawn(user_worker);
-
-                    per_user_worker_data_ref.clone()
+                for x in operations_since_last_checkpoint {
+                    let op = serde_json::from_str(&x.jsonval)
+                        .map_err(handlers::report_internal_serde_error)?;
+                    apply_operation(&mut snapshot, op);
                 }
-                Entry::Occupied(o) => o.get().clone(),
+
+                let per_user_worker_data_ref = v.insert(Arc::new(Mutex::new(PerUserWorkerData {
+                    updates_tx,
+                    snapshot: snapshot.clone(),
+                    user,
+                    checkpoint_id: recent_checkpoint.checkpoint_id,
+                })));
+
+                (per_user_worker_data_ref.clone(), updates_rx, snapshot)
             }
-        };
-        // return per user worker data on success
-        per_user_worker_data
+            Entry::Occupied(o) => {
+                let per_user_worker_data_ref = o.get().clone();
+                let lock = per_user_worker_data_ref.lock().await;
+                let receiver = lock.updates_tx.subscribe();
+                let snapshot = lock.snapshot.clone();
+                drop(lock);
+                (per_user_worker_data_ref, receiver, snapshot)
+            }
+        }
     };
 
-    let per_user_worker_data = match maybe_per_user_worker_data {
+    let (per_user_worker_data, updates_rx, snapshot) = match maybe_per_user_worker_data {
         Ok(v) => v,
         Err(e) => {
             // attempt to close connection gracefully
@@ -214,8 +221,13 @@ pub async fn manage_updates_ws(
         }
     };
 
-    let server_update_stream = BroadcastStream::new(per_user_worker_data.updates_tx.subscribe())
+    // first emit the state set, then start producing actual things
+    let server_update_stream = stream::once(async { Ok(WebsocketOp::OverwriteState(snapshot)) })
+        .chain(BroadcastStream::new(updates_rx))
         .map(|x| TaskUpdateKind::ServerUpdate(x));
+
+    // pin stream
+    tokio::pin!(server_update_stream);
 
     let mut joint_stream = stream_select!(joint_stream, server_update_stream);
 
@@ -228,7 +240,8 @@ pub async fn manage_updates_ws(
                 match msg {
                     Message::Text(text) => {
                         if let Err(e) =
-                            handle_ws_client_op(data.clone(), &per_user_worker_data, &text).await
+                            handle_ws_client_op(data.clone(), per_user_worker_data.clone(), &text)
+                                .await
                         {
                             break Some(CloseReason {
                                 code: CloseCode::Error,
@@ -282,7 +295,8 @@ pub async fn manage_updates_ws(
             // got message from server
             TaskUpdateKind::ServerUpdate(u) => match u {
                 Ok(op) => {
-                    let send_result = session.text(op.jsonval).await;
+                    let jsonval = serde_json::to_string(&op).unwrap();
+                    let send_result = session.text(jsonval).await;
                     match send_result {
                         Ok(()) => (),
                         Err(_) => break None,
@@ -301,45 +315,46 @@ pub async fn manage_updates_ws(
 
 pub async fn handle_ws_client_op(
     data: web::Data<AppData>,
-    per_user_worker_data: &PerUserWorkerData,
+    per_user_worker_data: Arc<Mutex<PerUserWorkerData>>,
     req: &str,
 ) -> Result<(), AppError> {
-    let opreq = serde_json::from_str::<WebsocketClientOpMessage>(req)
+    // try to parse request
+    let request::WebsocketOpMessage(op) = serde_json::from_str::<request::WebsocketOpMessage>(req)
         .map_err(handlers::report_serde_error)?;
 
-    // submit it to the writer thread for this user
-    // make modification to the current snapshot
-    match opreq {
-        WebsocketClientOpMessage::LiveTaskInsNew { value, position } => todo!(),
-        WebsocketClientOpMessage::LiveTaskInsRestore { finished_task_id } => todo!(),
-        WebsocketClientOpMessage::LiveTaskEdit {
-            live_task_id,
-            value,
-        } => todo!(),
-        WebsocketClientOpMessage::LiveTaskDel { live_task_id } => todo!(),
-        WebsocketClientOpMessage::LiveTaskDelIns {
-            live_task_id_del,
-            live_task_id_ins,
-        } => todo!(),
-        WebsocketClientOpMessage::FinishedTaskNew {
-            live_task_id,
-            status,
-        } => todo!(),
+   // establish connection to database
+    let con: &mut tokio_postgres::Client =
+        &mut *data.pool.get().await.map_err(handlers::report_pool_err)?;
+    // lock the per-user lock
+    {
+        let mut lock = per_user_worker_data.lock().await;
+        // add to db
+        let dbop = operation_service::add(&mut *con, lock.checkpoint_id, op.clone())
+            .await
+            .map_err(handlers::report_postgres_err)?;
+        // apply operation
+        apply_operation(&mut lock.snapshot, op.clone());
+        // broadcast
+        lock.updates_tx.send(op);
     }
 
+    // create thread server request
     return Ok(());
 }
 
 fn apply_operation(
-    ServerStateCheckpoint {
-        mut finished,
-        mut live,
-    }: ServerStateCheckpoint,
-    op: WebsocketServerUpdateMessage,
-) -> ServerStateCheckpoint {
+    StateSnapshot {
+        ref mut finished,
+        ref mut live,
+    }: &mut StateSnapshot,
+    op: WebsocketOp,
+) {
     match op {
-        WebsocketServerUpdateMessage::OverwriteState(s) => s,
-        WebsocketServerUpdateMessage::LiveTaskInsNew {
+        WebsocketOp::OverwriteState(s) => {
+            *live = s.live;
+            *finished = s.finished;
+        }
+        WebsocketOp::LiveTaskInsNew {
             value,
             live_task_id,
             position,
@@ -353,17 +368,15 @@ fn apply_operation(
                     },
                 );
             }
-            ServerStateCheckpoint { live, finished }
         }
-        WebsocketServerUpdateMessage::LiveTaskInsRestore { finished_task_id } => {
+        WebsocketOp::LiveTaskInsRestore { finished_task_id } => {
             // if it was found in the finished list, push it to the front
             if let Some(position) = finished.iter().position(|x| x.id == finished_task_id) {
                 let FinishedTask { id, value, .. } = finished.remove(position);
                 live.push_front(LiveTask { id, value });
             }
-            ServerStateCheckpoint { live, finished }
         }
-        WebsocketServerUpdateMessage::LiveTaskEdit {
+        WebsocketOp::LiveTaskEdit {
             live_task_id,
             value,
         } => {
@@ -373,13 +386,11 @@ fn apply_operation(
                     break;
                 }
             }
-            ServerStateCheckpoint { live, finished }
         }
-        WebsocketServerUpdateMessage::LiveTaskDel { live_task_id } => {
+        WebsocketOp::LiveTaskDel { live_task_id } => {
             live.retain(|x| x.id != live_task_id);
-            ServerStateCheckpoint { live, finished }
         }
-        WebsocketServerUpdateMessage::LiveTaskDelIns {
+        WebsocketOp::LiveTaskDelIns {
             live_task_id_del,
             live_task_id_ins,
         } => {
@@ -393,9 +404,8 @@ fn apply_operation(
                 let removed = live.remove(del_pos).unwrap();
                 live.insert(ins_pos, removed);
             }
-            ServerStateCheckpoint { live, finished }
         }
-        WebsocketServerUpdateMessage::FinishedTaskPush {
+        WebsocketOp::FinishedTaskPush {
             finished_task_id,
             value,
             status,
@@ -405,9 +415,8 @@ fn apply_operation(
                 value,
                 status,
             });
-            ServerStateCheckpoint { live, finished }
         }
-        WebsocketServerUpdateMessage::FinishedTaskPushComplete {
+        WebsocketOp::FinishedTaskPushComplete {
             live_task_id,
             finished_task_id,
             status,
@@ -419,12 +428,6 @@ fn apply_operation(
                     status,
                 });
             }
-            ServerStateCheckpoint { live, finished }
         }
     }
 }
-
-// in case there is more than one websocket connecting to the same server, we need a way to order sql reads and writes to the same user
-// to do this, we'll initialize a worker that is responsible for writing to sql and updating the rw lock
-// how do we know wrt
-async fn user_worker() {}

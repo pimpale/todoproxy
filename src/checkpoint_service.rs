@@ -1,5 +1,5 @@
 use super::db_types::*;
-use todoproxy_api::response::ServerStateCheckpoint;
+use todoproxy_api::StateSnapshot;
 use tokio_postgres::GenericClient;
 
 impl From<tokio_postgres::row::Row> for Checkpoint {
@@ -17,7 +17,7 @@ impl From<tokio_postgres::row::Row> for Checkpoint {
 pub async fn add(
     con: &mut impl GenericClient,
     creator_user_id: i64,
-    checkpoint: ServerStateCheckpoint,
+    checkpoint: StateSnapshot,
 ) -> Result<Checkpoint, tokio_postgres::Error> {
     let jsonval = serde_json::to_string(&checkpoint).unwrap();
     let row = con
