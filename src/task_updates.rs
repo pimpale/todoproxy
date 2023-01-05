@@ -62,6 +62,7 @@ pub async fn manage_updates_ws(
                     Message::Text(text) => {
                         // try to parse the json
                         break serde_json::from_str::<request::WebsocketInitMessage>(&text)
+                            .map_err(handlers::report_serde_error)
                             .map_err(|e| {
                                 Some(CloseReason {
                                     code: CloseCode::Error,
