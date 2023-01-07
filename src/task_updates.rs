@@ -8,7 +8,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use todoproxy_api::{FinishedTask, LiveTask, StateSnapshot, WebsocketOp, WebsocketOpKind, request::WebsocketInitMessage};
+use todoproxy_api::{
+    request::WebsocketInitMessage, FinishedTask, LiveTask, StateSnapshot, WebsocketOp,
+    WebsocketOpKind,
+};
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream, IntervalStream};
 
@@ -182,9 +185,9 @@ pub async fn manage_updates_ws(
                     .map_err(handlers::report_internal_serde_error)?;
 
                 for x in operations_since_last_checkpoint {
-                    let op = serde_json::from_str(&x.jsonval)
+                    let op = serde_json::from_str::<WebsocketOp>(&x.jsonval)
                         .map_err(handlers::report_internal_serde_error)?;
-                    apply_operation(&mut snapshot, op);
+                    apply_operation(&mut snapshot, op.kind);
                 }
 
                 let per_user_worker_data_ref = v.insert(Arc::new(Mutex::new(PerUserWorkerData {
@@ -391,9 +394,6 @@ fn apply_operation(
             let del_pos = live.iter().position(|x| x.id == id_del);
 
             if let (Some(mut ins_pos), Some(del_pos)) = (ins_pos, del_pos) {
-                if ins_pos > del_pos {
-                    ins_pos -= 1;
-                }
                 let removed = live.remove(del_pos).unwrap();
                 live.insert(ins_pos, removed);
             }
