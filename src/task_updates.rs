@@ -8,13 +8,13 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use todoproxy_api::{request, response, FinishedTask, LiveTask, StateSnapshot, WebsocketOp};
+use todoproxy_api::{FinishedTask, LiveTask, StateSnapshot, WebsocketOp, WebsocketOpKind, request::WebsocketInitMessage};
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream, IntervalStream};
 
-use crate::db_types;
 use crate::handlers::{self, get_user_if_api_key_valid};
 use crate::{checkpoint_service, operation_service, PerUserWorkerData};
+use crate::{db_types, utils};
 use crate::{handlers::AppError, AppData};
 
 /// How often heartbeat pings are sent.
@@ -61,7 +61,7 @@ pub async fn manage_updates_ws(
                 match msg {
                     Message::Text(text) => {
                         // try to parse the json
-                        break serde_json::from_str::<request::WebsocketInitMessage>(&text)
+                        break serde_json::from_str::<WebsocketInitMessage>(&text)
                             .map_err(handlers::report_serde_error)
                             .map_err(|e| {
                                 Some(CloseReason {
@@ -223,9 +223,14 @@ pub async fn manage_updates_ws(
     };
 
     // first emit the state set, then start producing actual things
-    let server_update_stream = stream::once(async { Ok(WebsocketOp::OverwriteState(snapshot)) })
-        .chain(BroadcastStream::new(updates_rx))
-        .map(|x| TaskUpdateKind::ServerUpdate(x));
+    let server_update_stream = stream::once(async {
+        Ok(WebsocketOp {
+            alleged_time: utils::current_time_millis(),
+            kind: WebsocketOpKind::OverwriteState(snapshot),
+        })
+    })
+    .chain(BroadcastStream::new(updates_rx))
+    .map(|x| TaskUpdateKind::ServerUpdate(x));
 
     // pin stream
     tokio::pin!(server_update_stream);
@@ -320,10 +325,9 @@ pub async fn handle_ws_client_op(
     req: &str,
 ) -> Result<(), AppError> {
     // try to parse request
-    let request::WebsocketOpMessage(op) = serde_json::from_str::<request::WebsocketOpMessage>(req)
-        .map_err(handlers::report_serde_error)?;
+    let op = serde_json::from_str::<WebsocketOp>(req).map_err(handlers::report_serde_error)?;
 
-   // establish connection to database
+    // establish connection to database
     let con: &mut tokio_postgres::Client =
         &mut *data.pool.get().await.map_err(handlers::report_pool_err)?;
     // lock the per-user lock
@@ -334,7 +338,7 @@ pub async fn handle_ws_client_op(
             .await
             .map_err(handlers::report_postgres_err)?;
         // apply operation
-        apply_operation(&mut lock.snapshot, op.clone());
+        apply_operation(&mut lock.snapshot, op.kind.clone());
         // broadcast
         lock.updates_tx.send(op);
     }
@@ -348,55 +352,43 @@ fn apply_operation(
         ref mut finished,
         ref mut live,
     }: &mut StateSnapshot,
-    op: WebsocketOp,
+    op: WebsocketOpKind,
 ) {
     match op {
-        WebsocketOp::OverwriteState(s) => {
+        WebsocketOpKind::OverwriteState(s) => {
             *live = s.live;
             *finished = s.finished;
         }
-        WebsocketOp::LiveTaskInsNew {
+        WebsocketOpKind::InsLiveTask {
             value,
-            live_task_id,
+            id,
             position,
         } => {
             if position <= live.len() {
-                live.insert(
-                    position,
-                    LiveTask {
-                        id: live_task_id,
-                        value,
-                    },
-                );
+                live.insert(position, LiveTask { id, value });
             }
         }
-        WebsocketOp::LiveTaskInsRestore { finished_task_id } => {
+        WebsocketOpKind::RestoreFinishedTask { id } => {
             // if it was found in the finished list, push it to the front
-            if let Some(position) = finished.iter().position(|x| x.id == finished_task_id) {
+            if let Some(position) = finished.iter().position(|x| x.id == id) {
                 let FinishedTask { id, value, .. } = finished.remove(position);
                 live.push_front(LiveTask { id, value });
             }
         }
-        WebsocketOp::LiveTaskEdit {
-            live_task_id,
-            value,
-        } => {
+        WebsocketOpKind::EditLiveTask { id, value } => {
             for x in live.iter_mut() {
-                if x.id == live_task_id {
+                if x.id == id {
                     x.value = value;
                     break;
                 }
             }
         }
-        WebsocketOp::LiveTaskDel { live_task_id } => {
-            live.retain(|x| x.id != live_task_id);
+        WebsocketOpKind::DelLiveTask { id } => {
+            live.retain(|x| x.id != id);
         }
-        WebsocketOp::LiveTaskDelIns {
-            live_task_id_del,
-            live_task_id_ins,
-        } => {
-            let ins_pos = live.iter().position(|x| x.id == live_task_id_ins);
-            let del_pos = live.iter().position(|x| x.id == live_task_id_del);
+        WebsocketOpKind::MvLiveTask { id_ins, id_del } => {
+            let ins_pos = live.iter().position(|x| x.id == id_ins);
+            let del_pos = live.iter().position(|x| x.id == id_del);
 
             if let (Some(mut ins_pos), Some(del_pos)) = (ins_pos, del_pos) {
                 if ins_pos > del_pos {
@@ -406,25 +398,10 @@ fn apply_operation(
                 live.insert(ins_pos, removed);
             }
         }
-        WebsocketOp::FinishedTaskPush {
-            finished_task_id,
-            value,
-            status,
-        } => {
-            finished.push(FinishedTask {
-                id: finished_task_id,
-                value,
-                status,
-            });
-        }
-        WebsocketOp::FinishedTaskPushComplete {
-            live_task_id,
-            finished_task_id,
-            status,
-        } => {
-            if let Some(pos_in_live) = live.iter().position(|x| x.id == live_task_id) {
+        WebsocketOpKind::FinishLiveTask { id, status } => {
+            if let Some(pos_in_live) = live.iter().position(|x| x.id == id) {
                 finished.push(FinishedTask {
-                    id: finished_task_id,
+                    id,
                     value: live.remove(pos_in_live).unwrap().value,
                     status,
                 });

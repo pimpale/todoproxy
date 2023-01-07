@@ -25,7 +25,7 @@ pub async fn add(
             "INSERT INTO
              checkpoint(
                  creator_user_id,
-                 jsonval,
+                 jsonval
              )
              VALUES($1, $2)
              RETURNING checkpoint_id, creation_time
@@ -63,7 +63,7 @@ pub async fn get_recent_by_user_id(
 ) -> Result<Option<Checkpoint>, tokio_postgres::Error> {
     let result = con
         .query_opt(
-            "SELECT * FROM recent_checkpoint_by_used_id WHERE creator_user_id=$1",
+            "SELECT * FROM recent_checkpoint_by_user_id WHERE creator_user_id=$1",
             &[&creator_user_id],
         )
         .await?

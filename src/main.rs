@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     log::info!(target:"todoproxy::deadpool", "built database connection pool");
 
     // open connection to auth service
-    let auth_service = AuthService::new(&auth_service_url).await;
+    let auth_service = AuthService::new(&auth_service_url);
     log::info!(target:"todoproxy::deadpool", "connected to auth service");
 
     let user_worker_data = Arc::new(Mutex::new(HashMap::new()));

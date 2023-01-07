@@ -27,12 +27,11 @@ create view recent_checkpoint_by_user_id as
   on maxids.id = c.checkpoint_id;
 
 
-
 drop table if exists operation cascade;
 create table operation(
   operation_id bigserial primary key,
   creation_time bigint not null default extract(epoch from now()) * 1000,
-  creator_user_id bigint not null,
+  checkpoint_id bigint not null references checkpoint(checkpoint_id),
   jsonval text not null
 );
 

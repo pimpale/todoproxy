@@ -237,9 +237,9 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.60"
+version = "0.1.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "677d1d8ab452a3936018a687b20e6f7cf5363d713b732b8884001317b0e48aa3"
+checksum = "705339e0e4a9690e2908d2b3d049d85682cf19fbd5782494498fbf7003a6a282"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -249,7 +249,7 @@ dependencies = [
 [[package]]
 name = "auth-service-api"
 version = "0.7.7"
-source = "git+https://github.com/innexgo/auth-service-api#ea7a6d76a24bd4a0bd697e7b2e070caa5151406c"
+source = "git+https://github.com/innexgo/auth-service-api#7d85dfdecffc503225e345090915f0e225676ee4"
 dependencies = [
  "derive_more",
  "reqwest",
@@ -1649,7 +1649,7 @@ dependencies = [
 [[package]]
 name = "todoproxy-api"
 version = "0.0.1"
-source = "git+https://github.com/pimpale/todoproxy-api#19e245df7658365c5eef18deb00b4427f7408f06"
+source = "git+https://github.com/pimpale/todoproxy-api#1457376fde9d8ae46a61782bf787a49d52ea03e2"
 dependencies = [
  "derive_more",
  "num-derive",
@@ -1660,9 +1660,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.23.1"
+version = "1.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38a54aca0c15d014013256222ba0ebed095673f89345dd79119d912eb561b7a8"
+checksum = "1d9f76183f91ecfb55e1d7d5602bd1d979e38a3a522fe900241cf195624d67ae"
 dependencies = [
  "autocfg",
  "bytes",
@@ -1778,9 +1778,9 @@ dependencies = [
 
 [[package]]
 name = "try-lock"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59547bce71d9c38b83d9c0e92b6066c4253371f15005def0c30d9657f50c7642"
+checksum = "3528ecfd12c466c6f163363caf2d02a71161dd5e1cc6ae7b34207ea2d42d81ed"
 
 [[package]]
 name = "typenum"
