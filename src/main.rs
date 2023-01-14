@@ -111,10 +111,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
             // add data
             .app_data(actix_web::web::Data::new(data.clone()))
             // handle info query
-            .service(web::resource("/info").route(web::get().to(handlers::info)))
+            .service(web::resource("/public/info").route(web::route().to(handlers::info)))
             // handle ws connection
             .service(
-                web::resource("/ws/task_updates").route(web::get().to(handlers::ws_task_updates)),
+                web::resource("/public/ws/task_updates").route(web::get().to(handlers::ws_task_updates)),
             )
     })
     .bind((Ipv4Addr::LOCALHOST, port))?

@@ -86,12 +86,15 @@ pub async fn get_user_if_api_key_valid(
 }
 
 // respond with info about stuff
-pub async fn info() -> Result<impl Responder, AppError> {
+pub async fn info(data: web::Data<AppData>) -> Result<impl Responder, AppError> {
+    let info = data.auth_service.info().await.map_err(report_auth_err)?;
     return Ok(web::Json(response::Info {
         service: String::from(super::SERVICE),
         version_major: super::VERSION_MAJOR,
         version_minor: super::VERSION_MINOR,
         version_rev: super::VERSION_REV,
+        site_external_url: data.site_external_url.clone(),
+        auth_service_external_url: info.site_external_url,
     }));
 }
 

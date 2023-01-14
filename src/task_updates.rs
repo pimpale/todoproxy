@@ -362,14 +362,8 @@ fn apply_operation(
             *live = s.live;
             *finished = s.finished;
         }
-        WebsocketOpKind::InsLiveTask {
-            value,
-            id,
-            position,
-        } => {
-            if position <= live.len() {
-                live.insert(position, LiveTask { id, value });
-            }
+        WebsocketOpKind::InsLiveTask { value, id } => {
+            live.push_front(LiveTask { id, value });
         }
         WebsocketOpKind::RestoreFinishedTask { id } => {
             // if it was found in the finished list, push it to the front
