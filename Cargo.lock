@@ -249,7 +249,7 @@ dependencies = [
 [[package]]
 name = "auth-service-api"
 version = "0.7.7"
-source = "git+https://github.com/innexgo/auth-service-api#abef716aaae5a316409d892304f28a7fa352409c"
+source = "git+https://github.com/innexgo/auth-service-api#5f7ecdb9b09e86307696694e439b4fb766a84fbc"
 dependencies = [
  "derive_more",
  "reqwest",
@@ -1648,7 +1648,7 @@ dependencies = [
 [[package]]
 name = "todoproxy-api"
 version = "0.0.1"
-source = "git+https://github.com/pimpale/todoproxy-api#c79183d7f35288fed150a3e1e767073c02a20fe5"
+source = "git+https://github.com/pimpale/todoproxy-api#f00f9f2a6227e32ac53dc8f523225f60fe2b7d65"
 dependencies = [
  "derive_more",
  "num-derive",

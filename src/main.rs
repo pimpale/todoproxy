@@ -35,7 +35,7 @@ struct Opts {
     #[clap(long)]
     auth_service_url: String,
     #[clap(long)]
-    site_external_url: String,
+    app_pub_origin: String,
 }
 
 pub struct PerUserWorkerData {
@@ -53,7 +53,7 @@ pub struct PerUserWorkerData {
 pub struct AppData {
     pub user_worker_data: Arc<Mutex<HashMap<i64, Arc<Mutex<PerUserWorkerData>>>>>,
     pub auth_service: AuthService,
-    pub site_external_url: String,
+    pub app_pub_origin: String,
     pub pool: deadpool_postgres::Pool,
 }
 
@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
     let Opts {
         auth_service_url,
-        site_external_url,
+        app_pub_origin,
         port,
         database_url,
     } = Opts::parse();
@@ -100,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let data = AppData {
         user_worker_data,
         auth_service,
-        site_external_url,
+        app_pub_origin,
         pool,
     };
 

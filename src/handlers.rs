@@ -93,8 +93,9 @@ pub async fn info(data: web::Data<AppData>) -> Result<impl Responder, AppError> 
         version_major: super::VERSION_MAJOR,
         version_minor: super::VERSION_MINOR,
         version_rev: super::VERSION_REV,
-        site_external_url: data.site_external_url.clone(),
-        auth_service_external_url: info.site_external_url,
+        app_pub_origin: data.app_pub_origin.clone(),
+        auth_pub_api_href: info.app_pub_api_href,
+        auth_authenticator_href: info.app_authenticator_href,
     }));
 }
 
