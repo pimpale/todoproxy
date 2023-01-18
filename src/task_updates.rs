@@ -162,7 +162,7 @@ pub async fn manage_updates_ws(
                         user.user_id,
                         StateSnapshot {
                             live: VecDeque::new(),
-                            finished: Vec::new(),
+                            finished: VecDeque::new(),
                         },
                     )
                     .await
@@ -368,7 +368,7 @@ fn apply_operation(
         WebsocketOpKind::RestoreFinishedTask { id } => {
             // if it was found in the finished list, push it to the front
             if let Some(position) = finished.iter().position(|x| x.id == id) {
-                let FinishedTask { id, value, .. } = finished.remove(position);
+                let FinishedTask { id, value, .. } = finished.remove(position).unwrap();
                 live.push_front(LiveTask { id, value });
             }
         }
@@ -387,14 +387,14 @@ fn apply_operation(
             let ins_pos = live.iter().position(|x| x.id == id_ins);
             let del_pos = live.iter().position(|x| x.id == id_del);
 
-            if let (Some(mut ins_pos), Some(del_pos)) = (ins_pos, del_pos) {
+            if let (Some(ins_pos), Some(del_pos)) = (ins_pos, del_pos) {
                 let removed = live.remove(del_pos).unwrap();
                 live.insert(ins_pos, removed);
             }
         }
         WebsocketOpKind::FinishLiveTask { id, status } => {
             if let Some(pos_in_live) = live.iter().position(|x| x.id == id) {
-                finished.push(FinishedTask {
+                finished.push_front(FinishedTask {
                     id,
                     value: live.remove(pos_in_live).unwrap().value,
                     status,
