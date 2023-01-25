@@ -20,6 +20,8 @@ mod utils;
 mod checkpoint_service;
 mod operation_service;
 
+mod habitica_integration;
+
 static SERVICE: &'static str = "todoproxy";
 static VERSION_MAJOR: i64 = 0;
 static VERSION_MINOR: i64 = 0;
