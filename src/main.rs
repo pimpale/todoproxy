@@ -49,6 +49,8 @@ pub struct PerUserWorkerData {
     pub snapshot: StateSnapshot,
     // id of checkpoint
     pub checkpoint_id: i64,
+    // habitica integration
+    pub habitica_client: Option<habitica_integration::client::HabiticaClient>,
 }
 
 #[derive(Clone)]

@@ -195,6 +195,7 @@ pub async fn manage_updates_ws(
                     snapshot: snapshot.clone(),
                     user,
                     checkpoint_id: recent_checkpoint.checkpoint_id,
+                    habitica_client: None,
                 })));
 
                 (per_user_worker_data_ref.clone(), updates_rx, snapshot)
@@ -343,7 +344,7 @@ pub async fn handle_ws_client_op(
         // apply operation
         apply_operation(&mut lock.snapshot, op.kind.clone());
         // broadcast
-        lock.updates_tx.send(op);
+        let _ = lock.updates_tx.send(op);
     }
 
     // create thread server request
