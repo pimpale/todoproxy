@@ -4,20 +4,24 @@ use futures_util::{stream, stream_select, StreamExt};
 
 use actix_ws::{CloseCode, CloseReason, Message, ProtocolError};
 use std::{
-    collections::{hash_map::Entry, HashMap, VecDeque},
+    collections::{hash_map::Entry, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
 use todoproxy_api::{
-    request::WebsocketInitMessage, FinishedTask, LiveTask, StateSnapshot, WebsocketOp,
+    request::WebsocketInitMessage, FinishedTask, LiveTask, StateSnapshot, TaskStatus, WebsocketOp,
     WebsocketOpKind,
 };
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream, IntervalStream};
 
-use crate::handlers::{self, get_user_if_api_key_valid};
-use crate::{checkpoint_service, operation_service, PerUserWorkerData};
+use crate::PerUserWorkerData;
 use crate::{db_types, utils};
+use crate::{habitica_integration, habitica_integration_service};
+use crate::{
+    habitica_integration::client::{Direction, HabiticaClient, HabiticaError},
+    handlers::{self, get_user_if_api_key_valid},
+};
 use crate::{handlers::AppError, AppData};
 
 /// How often heartbeat pings are sent.
@@ -34,12 +38,11 @@ struct ConnectionState {
 
 pub async fn manage_updates_ws(
     data: web::Data<AppData>,
+    init_msg: WebsocketInitMessage,
     mut session: actix_ws::Session,
     msg_stream: actix_ws::MessageStream,
 ) {
     log::info!("connected");
-
-    let mut last_heartbeat = Instant::now();
 
     enum TaskUpdateKind {
         // we need to send a heartbeat
@@ -49,84 +52,6 @@ pub async fn manage_updates_ws(
         // we have to handle a broadcast from the server
         ServerUpdate(Result<WebsocketOp, BroadcastStreamRecvError>),
     }
-
-    let heartbeat_stream = IntervalStream::new(tokio::time::interval(HEARTBEAT_INTERVAL))
-        .map(|_| TaskUpdateKind::NeedToSendHeartbeat);
-    let client_message_stream = msg_stream.map(|x| TaskUpdateKind::ClientMessage(x));
-
-    let mut joint_stream = stream_select!(heartbeat_stream, client_message_stream,);
-
-    let reason = loop {
-        match joint_stream.next().await.unwrap() {
-            // received message from WebSocket client
-            TaskUpdateKind::ClientMessage(Ok(msg)) => {
-                log::debug!("msg: {msg:?}");
-                match msg {
-                    Message::Text(text) => {
-                        // try to parse the json
-                        break serde_json::from_str::<WebsocketInitMessage>(&text)
-                            .map_err(handlers::report_serde_error)
-                            .map_err(|e| {
-                                Some(CloseReason {
-                                    code: CloseCode::Error,
-                                    description: Some(e.to_string()),
-                                })
-                            });
-                    }
-                    Message::Binary(_) => {
-                        break Err(Some(CloseReason {
-                            code: CloseCode::Unsupported,
-                            description: Some(String::from("Only text supported")),
-                        }));
-                    }
-                    Message::Close(_) => break Err(None),
-                    Message::Ping(bytes) => {
-                        last_heartbeat = Instant::now();
-                        let _ = session.pong(&bytes).await;
-                    }
-                    Message::Pong(_) => {
-                        last_heartbeat = Instant::now();
-                    }
-                    Message::Continuation(_) => {
-                        break Err(Some(CloseReason {
-                            code: CloseCode::Unsupported,
-                            description: Some(String::from("No support for continuation frame.")),
-                        }));
-                    }
-                    // no-op; ignore
-                    Message::Nop => {}
-                };
-            }
-            // client WebSocket stream error
-            TaskUpdateKind::ClientMessage(Err(err)) => {
-                log::error!("{}", err);
-                break Err(None);
-            }
-            // heartbeat interval ticked
-            TaskUpdateKind::NeedToSendHeartbeat => {
-                // if no heartbeat ping/pong received recently, close the connection
-                if Instant::now().duration_since(last_heartbeat) > CLIENT_TIMEOUT {
-                    log::info!("client has not sent heartbeat in over {CLIENT_TIMEOUT:?}");
-                    break Err(None);
-                }
-                // send heartbeat ping
-                let _ = session.ping(b"").await;
-            }
-            // got message from server (impossible)
-            TaskUpdateKind::ServerUpdate(u) => {}
-        }
-    };
-
-    // get request and otherwise disconnect
-    let init_msg = match reason {
-        Err(reason) => {
-            // attempt to close connection gracefully
-            let _ = session.close(reason).await;
-            log::info!("disconnected init");
-            return;
-        }
-        Ok(req) => req,
-    };
 
     // try block for app
     let maybe_per_user_worker_data: Result<
@@ -148,54 +73,54 @@ pub async fn manage_updates_ws(
                 let con: &mut tokio_postgres::Client =
                     &mut *data.pool.get().await.map_err(handlers::report_pool_err)?;
 
-                // get recent checkpoint
-                let preexisting_checkpoint =
-                    checkpoint_service::get_recent_by_user_id(&mut *con, user.user_id)
+                // get recent habitica integration
+                let habitica_integration =
+                    habitica_integration_service::get_recent_by_user_id(&mut *con, user.user_id)
                         .await
-                        .map_err(handlers::report_postgres_err)?;
+                        .map_err(handlers::report_postgres_err)?
+                        .ok_or(AppError::IntegrationNotFound)?;
 
-                // if it doesn't exist, create checkpoint
-                let recent_checkpoint = match preexisting_checkpoint {
-                    Some(x) => x,
-                    None => checkpoint_service::add(
-                        &mut *con,
-                        user.user_id,
-                        StateSnapshot {
-                            live: VecDeque::new(),
-                            finished: VecDeque::new(),
-                        },
-                    )
+                // create client
+                let habitica_client = habitica_integration::client::HabiticaClient::new(
+                    data.author_id,
+                    crate::SERVICE.into(),
+                    habitica_integration.user_id,
+                    habitica_integration.api_key,
+                );
+
+                let tasks = habitica_client
+                    .get_user_tasks()
                     .await
-                    .map_err(handlers::report_postgres_err)?,
-                };
-
-                // get all operations since this checkpoint
-                let operations_since_last_checkpoint = operation_service::get_operations_since(
-                    &mut *con,
-                    recent_checkpoint.checkpoint_id,
-                )
-                .await
-                .map_err(handlers::report_postgres_err)?;
+                    .map_err(handlers::report_habitica_err)?;
 
                 // create channel
                 let (updates_tx, updates_rx) = tokio::sync::broadcast::channel(1000);
 
                 // create snapshot from checkpoint
-                let mut snapshot = serde_json::from_str(&recent_checkpoint.jsonval)
-                    .map_err(handlers::report_internal_serde_error)?;
-
-                for x in operations_since_last_checkpoint {
-                    let op = serde_json::from_str::<WebsocketOp>(&x.jsonval)
-                        .map_err(handlers::report_internal_serde_error)?;
-                    apply_operation(&mut snapshot, op.kind);
+                let mut snapshot = StateSnapshot {
+                    live: VecDeque::new(),
+                    finished: VecDeque::new(),
+                };
+                for task in tasks {
+                    if task.completed {
+                        snapshot.live.push_back(LiveTask {
+                            id: task._id,
+                            value: task.text,
+                        });
+                    } else {
+                        snapshot.finished.push_back(FinishedTask {
+                            id: task._id,
+                            value: task.text,
+                            status: TaskStatus::Succeeded,
+                        });
+                    }
                 }
 
                 let per_user_worker_data_ref = v.insert(Arc::new(Mutex::new(PerUserWorkerData {
                     updates_tx,
                     snapshot: snapshot.clone(),
                     user,
-                    checkpoint_id: recent_checkpoint.checkpoint_id,
-                    habitica_client: None,
+                    habitica_client,
                 })));
 
                 (per_user_worker_data_ref.clone(), updates_rx, snapshot)
@@ -226,6 +151,12 @@ pub async fn manage_updates_ws(
         }
     };
 
+    let mut last_heartbeat = Instant::now();
+
+    let heartbeat_stream = IntervalStream::new(tokio::time::interval(HEARTBEAT_INTERVAL))
+        .map(|_| TaskUpdateKind::NeedToSendHeartbeat);
+    let client_message_stream = msg_stream.map(|x| TaskUpdateKind::ClientMessage(x));
+
     // first emit the state set, then start producing actual things
     let server_update_stream = stream::once(async {
         Ok(WebsocketOp {
@@ -239,7 +170,11 @@ pub async fn manage_updates_ws(
     // pin stream
     tokio::pin!(server_update_stream);
 
-    let mut joint_stream = stream_select!(joint_stream, server_update_stream);
+    let mut joint_stream = stream_select!(
+        heartbeat_stream,
+        client_message_stream,
+        server_update_stream
+    );
 
     let reason = loop {
         match joint_stream.next().await.unwrap() {
@@ -337,10 +272,8 @@ pub async fn handle_ws_client_op(
     // lock the per-user lock
     {
         let mut lock = per_user_worker_data.lock().await;
-        // add to db
-        let dbop = operation_service::add(&mut *con, lock.checkpoint_id, op.clone())
-            .await
-            .map_err(handlers::report_postgres_err)?;
+        // add to habitica
+        let _ = post_operation(&mut lock.habitica_client, &lock.snapshot, op.kind.clone()).await;
         // apply operation
         apply_operation(&mut lock.snapshot, op.kind.clone());
         // broadcast
@@ -403,4 +336,38 @@ fn apply_operation(
             }
         }
     }
+}
+
+async fn post_operation(
+    client: &mut HabiticaClient,
+    StateSnapshot {
+        ref finished,
+        ref live,
+    }: &StateSnapshot,
+    op: WebsocketOpKind,
+) -> Result<(), HabiticaError> {
+    match op {
+        WebsocketOpKind::OverwriteState(s) => todo!(),
+        WebsocketOpKind::InsLiveTask { value, id } => {
+            client.insert_todo(id, value).await?;
+        }
+        WebsocketOpKind::RestoreFinishedTask { id } => {
+            client.score_task(id, Direction::Down).await?;
+        }
+        WebsocketOpKind::EditLiveTask { id, value } => {
+            client.update_task(id, value).await?;
+        }
+        WebsocketOpKind::DelLiveTask { id } => {
+            client.delete_task(id).await?;
+        }
+        WebsocketOpKind::MvLiveTask { id_ins, id_del } => {
+            if let Some(ins_pos) = live.iter().position(|x| x.id == id_ins) {
+                client.move_task(id_del, ins_pos).await?;
+            }
+        }
+        WebsocketOpKind::FinishLiveTask { id, status } => {
+            client.score_task(id, Direction::Up).await?;
+        }
+    }
+    Ok(())
 }

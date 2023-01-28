@@ -87,6 +87,23 @@ impl HabiticaClient {
     }
 
     // update task
+    pub async fn delete_task(&self, task_id: String) -> Result<(), HabiticaError> {
+        let resp = self
+            .client
+            .delete(format!("https://habitica.com/api/v3/tasks/{task_id}"))
+            .headers(self.construct_headers())
+            .send()
+            .await?;
+        match resp.status().as_u16() {
+            200 => Ok(()),
+            status => Err(HabiticaError::UnsuccessfulRequest(
+                status,
+                resp.text().await?,
+            )),
+        }
+    }
+
+    // update task
     pub async fn update_task(&self, task_id: String, text: String) -> Result<(), HabiticaError> {
         #[derive(Serialize)]
         struct TaskUpdate {
@@ -157,6 +174,28 @@ impl HabiticaClient {
             )),
         }
     }
+
+    // insert task
+    pub async fn insert_todo(&self, alias: String, text: String) -> Result<Task, HabiticaError> {
+        #[derive(Deserialize)]
+        struct TaskResp {
+            success: String,
+            data: Task,
+        }
+        let resp = self
+            .client
+            .post(format!("https://habitica.com/api/v3/tasks/user"))
+            .headers(self.construct_headers())
+            .send()
+            .await?;
+        match resp.status().as_u16() {
+            200 => Ok(resp.json::<TaskResp>().await?.data),
+            status => Err(HabiticaError::UnsuccessfulRequest(
+                status,
+                resp.text().await?,
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -176,33 +215,34 @@ impl Display for Direction {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Task {
-    text: Option<String>,
-    frequency: Option<String>,
-    task_type: Option<String>,
-    notes: Option<String>,
-    repeat: Option<TaskRepeat>,
-    every_x: Option<i64>,
-    next_due: Option<Vec<String>>,
-    completed: Option<bool>,
-    is_due: Option<bool>,
-    checklist: Option<TaskCheckList>,
+    pub _id: String,
+    pub text: Option<String>,
+    pub frequency: Option<String>,
+    pub task_type: Option<String>,
+    pub notes: Option<String>,
+    pub repeat: Option<TaskRepeat>,
+    pub every_x: Option<i64>,
+    pub next_due: Option<Vec<String>>,
+    pub completed: Option<bool>,
+    pub is_due: Option<bool>,
+    pub checklist: Option<TaskCheckList>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TaskRepeat {
-    days: HashMap<String, bool>,
+    pub days: HashMap<String, bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TaskCheckList {
-    list: Vec<TaskCheckListItem>,
+    pub list: Vec<TaskCheckListItem>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TaskCheckListItem {
-    completed: bool,
-    text: String,
-    id: String,
+    pub completed: bool,
+    pub text: String,
+    pub id: String,
 }
 
 #[derive(Debug)]

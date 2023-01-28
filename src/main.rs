@@ -17,9 +17,7 @@ mod handlers;
 mod task_updates;
 mod utils;
 
-mod checkpoint_service;
-mod operation_service;
-
+mod habitica_integration_service;
 mod habitica_integration;
 
 static SERVICE: &'static str = "todoproxy";
@@ -38,6 +36,8 @@ struct Opts {
     auth_service_url: String,
     #[clap(long)]
     app_pub_origin: String,
+    #[clap(long)]
+    author_id: String,
 }
 
 pub struct PerUserWorkerData {
@@ -47,14 +47,13 @@ pub struct PerUserWorkerData {
     pub updates_tx: broadcast::Sender<WebsocketOp>,
     // snapshot at the current state of the channel
     pub snapshot: StateSnapshot,
-    // id of checkpoint
-    pub checkpoint_id: i64,
     // habitica integration
-    pub habitica_client: Option<habitica_integration::client::HabiticaClient>,
+    pub habitica_client: habitica_integration::client::HabiticaClient,
 }
 
 #[derive(Clone)]
 pub struct AppData {
+    pub author_id: String,
     pub user_worker_data: Arc<Mutex<HashMap<i64, Arc<Mutex<PerUserWorkerData>>>>>,
     pub auth_service: AuthService,
     pub app_pub_origin: String,
@@ -70,6 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         app_pub_origin,
         port,
         database_url,
+        author_id
     } = Opts::parse();
 
     // connect to postgres
@@ -102,6 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
     // start server
     let data = AppData {
+        author_id,
         user_worker_data,
         auth_service,
         app_pub_origin,
