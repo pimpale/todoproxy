@@ -15,8 +15,8 @@ use todoproxy_api::{
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream, IntervalStream};
 
+use crate::utils;
 use crate::PerUserWorkerData;
-use crate::{db_types, utils};
 use crate::{habitica_integration, habitica_integration_service};
 use crate::{
     habitica_integration::client::{Direction, HabiticaClient, HabiticaError},
@@ -82,7 +82,7 @@ pub async fn manage_updates_ws(
 
                 // create client
                 let habitica_client = habitica_integration::client::HabiticaClient::new(
-                    data.author_id,
+                    data.author_id.clone(),
                     crate::SERVICE.into(),
                     habitica_integration.user_id,
                     habitica_integration.api_key,
@@ -101,16 +101,17 @@ pub async fn manage_updates_ws(
                     live: VecDeque::new(),
                     finished: VecDeque::new(),
                 };
+
                 for task in tasks {
-                    if task.completed {
+                    if task.completed != Some(true) {
                         snapshot.live.push_back(LiveTask {
                             id: task._id,
-                            value: task.text,
+                            value: task.text.unwrap_or_default(),
                         });
                     } else {
                         snapshot.finished.push_back(FinishedTask {
                             id: task._id,
-                            value: task.text,
+                            value: task.text.unwrap_or_default(),
                             status: TaskStatus::Succeeded,
                         });
                     }
@@ -273,7 +274,7 @@ pub async fn handle_ws_client_op(
     {
         let mut lock = per_user_worker_data.lock().await;
         // add to habitica
-        let _ = post_operation(&mut lock.habitica_client, &lock.snapshot, op.kind.clone()).await;
+        let _ = post_operation(&lock.habitica_client, &lock.snapshot, op.kind.clone()).await;
         // apply operation
         apply_operation(&mut lock.snapshot, op.kind.clone());
         // broadcast
@@ -339,7 +340,7 @@ fn apply_operation(
 }
 
 async fn post_operation(
-    client: &mut HabiticaClient,
+    client: &HabiticaClient,
     StateSnapshot {
         ref finished,
         ref live,
@@ -362,7 +363,7 @@ async fn post_operation(
         }
         WebsocketOpKind::MvLiveTask { id_ins, id_del } => {
             if let Some(ins_pos) = live.iter().position(|x| x.id == id_ins) {
-                client.move_task(id_del, ins_pos).await?;
+                client.move_task(id_del, ins_pos as i64).await?;
             }
         }
         WebsocketOpKind::FinishLiveTask { id, status } => {

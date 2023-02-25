@@ -1,5 +1,4 @@
 use super::db_types::*;
-use todoproxy_api::StateSnapshot;
 use tokio_postgres::GenericClient;
 
 impl From<tokio_postgres::row::Row> for HabiticaIntegration {
@@ -21,7 +20,6 @@ pub async fn add(
     user_id: String,
     api_key: String,
 ) -> Result<HabiticaIntegration, tokio_postgres::Error> {
-    let jsonval = serde_json::to_string(&habitica_integration).unwrap();
     let row = con
         .query_one(
             "INSERT INTO

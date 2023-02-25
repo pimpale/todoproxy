@@ -1,3 +1,5 @@
+use crate::habitica_integration;
+
 use super::task_updates;
 use super::AppData;
 
@@ -59,6 +61,12 @@ pub fn report_serde_error(e: serde_json::Error) -> AppError {
     log::info!("{}", e);
     AppError::DecodeError
 }
+
+pub fn report_habitica_err(e: habitica_integration::client::HabiticaError) -> AppError {
+    log::error!("{}", e);
+    AppError::InternalServerError
+}
+
 
 pub fn report_auth_err(e: AuthError) -> AppError {
     match e {
