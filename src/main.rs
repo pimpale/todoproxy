@@ -117,6 +117,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
             .app_data(actix_web::web::Data::new(data.clone()))
             // handle info query
             .service(web::resource("/public/info").route(web::route().to(handlers::info)))
+            // habitica_integration new
+            .service(web::resource("/public/habitica_integration/new").route(web::route().to(handlers::habitica_integration_new)))
+            // habitica_integration view
+            .service(web::resource("/public/habitica_integration/view").route(web::route().to(handlers::habitica_integration_view)))
             // handle ws connection
             .service(
                 web::resource("/public/ws/task_updates").route(web::get().to(handlers::ws_task_updates)),

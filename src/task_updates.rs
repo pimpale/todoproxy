@@ -32,10 +32,6 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long before lack of client response causes a timeout.
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
-struct ConnectionState {
-    user: User,
-}
-
 pub async fn manage_updates_ws(
     data: web::Data<AppData>,
     init_msg: WebsocketInitMessage,
@@ -43,15 +39,6 @@ pub async fn manage_updates_ws(
     msg_stream: actix_ws::MessageStream,
 ) {
     log::info!("connected");
-
-    enum TaskUpdateKind {
-        // we need to send a heartbeat
-        NeedToSendHeartbeat,
-        // we received a message from the client
-        ClientMessage(Result<Message, ProtocolError>),
-        // we have to handle a broadcast from the server
-        ServerUpdate(Result<WebsocketOp, BroadcastStreamRecvError>),
-    }
 
     // try block for app
     let maybe_per_user_worker_data: Result<
@@ -151,6 +138,17 @@ pub async fn manage_updates_ws(
             return;
         }
     };
+
+
+    enum TaskUpdateKind {
+        // we need to send a heartbeat
+        NeedToSendHeartbeat,
+        // we received a message from the client
+        ClientMessage(Result<Message, ProtocolError>),
+        // we have to handle a broadcast from the server
+        ServerUpdate(Result<WebsocketOp, BroadcastStreamRecvError>),
+    }
+
 
     let mut last_heartbeat = Instant::now();
 
