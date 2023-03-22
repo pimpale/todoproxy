@@ -118,6 +118,20 @@ pub async fn habitica_integration_new(
 
     let con: &mut tokio_postgres::Client = &mut *data.pool.get().await.map_err(report_pool_err)?;
 
+    // create client
+    let habitica_client = habitica_integration::client::HabiticaClient::new(
+        data.author_id.clone(),
+        crate::SERVICE.into(),
+        req.integration_user_id.clone(),
+        req.integration_api_key.clone(),
+    );
+
+    // verify that it works
+    let _ = habitica_client
+        .get_user_tasks()
+        .await
+        .map_err(report_habitica_err)?;
+
     let resp = habitica_integration_service::add(
         &mut *con,
         user.user_id,
