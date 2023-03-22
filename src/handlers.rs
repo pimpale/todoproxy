@@ -1,4 +1,5 @@
 use crate::habitica_integration;
+use crate::habitica_integration_service;
 
 use super::task_updates;
 use super::AppData;
@@ -67,7 +68,6 @@ pub fn report_habitica_err(e: habitica_integration::client::HabiticaError) -> Ap
     AppError::InternalServerError
 }
 
-
 pub fn report_auth_err(e: AuthError) -> AppError {
     match e {
         AuthError::ApiKeyNonexistent => AppError::Unauthorized,
@@ -110,36 +110,45 @@ pub async fn info(data: web::Data<AppData>) -> Result<impl Responder, AppError> 
     }));
 }
 
-#[actix_web::post("/run_code")]
-pub async fn run_code(
-    req: web::Json<RunCodeRequest>,
-    data: web::Data<PythonboxData>,
+pub async fn habitica_integration_new(
+    req: web::Json<request::HabiticaIntegrationNewProps>,
+    data: web::Data<AppData>,
 ) -> Result<impl Responder, AppError> {
-    // convert base64 tar gz into bytes
-    let content = engine::general_purpose::STANDARD
-        .decode(req.base_64_tar_gz.as_str())
-        .map_err(|_| {
-            error!(target: "pythonbox::run_code", "Invalid Base 64, refusing request");
-            AppError::InvalidBase64
-        })?;
+    let user = get_user_if_api_key_valid(&data.auth_service, req.api_key.clone()).await?;
 
-    // max memory = 100MB
-    let max_memory_usage = 100 * 0x100000;
+    let con: &mut tokio_postgres::Client = &mut *data.pool.get().await.map_err(report_pool_err)?;
 
-    let resp = docker::run_code(
-        content,
-        req.max_time_s,
-        max_memory_usage,
-        data.image.clone(),
-        data.docker.clone(),
+    let resp = habitica_integration_service::add(
+        &mut *con,
+        user.user_id,
+        req.integration_user_id.clone(),
+        req.integration_api_key.clone(),
     )
-    .await?;
+    .await
+    .map_err(report_postgres_err)?;
 
-    let engine = engine::general_purpose::STANDARD;
-    return Ok(web::Json(RunCodeResponse {
-        stdout: engine.encode(resp.stdout),
-        stderr: engine.encode(resp.stderr),
-        exit_code: resp.exit_code,
+    return Ok(web::Json(response::HabiticaIntegration {
+        integration_user_id: resp.user_id,
+        integration_api_key: resp.api_key,
+    }));
+}
+
+pub async fn habitica_integration_view(
+    req: web::Json<request::HabiticaIntegrationViewProps>,
+    data: web::Data<AppData>,
+) -> Result<impl Responder, AppError> {
+    let user = get_user_if_api_key_valid(&data.auth_service, req.api_key.clone()).await?;
+
+    let con: &mut tokio_postgres::Client = &mut *data.pool.get().await.map_err(report_pool_err)?;
+
+    let integration = habitica_integration_service::get_recent_by_user_id(&mut *con, user.user_id)
+        .await
+        .map_err(report_postgres_err)?
+        .ok_or(AppError::NotFound)?;
+
+    return Ok(web::Json(response::HabiticaIntegration {
+        integration_user_id: integration.user_id,
+        integration_api_key: integration.api_key,
     }));
 }
 

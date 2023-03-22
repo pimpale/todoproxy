@@ -45,7 +45,7 @@ impl HabiticaClient {
     pub async fn get_user_tasks(&self) -> Result<Vec<Task>, HabiticaError> {
         #[derive(Deserialize)]
         struct TasksUserResp {
-            success: String,
+            success: bool,
             data: Vec<Task>,
         }
         let resp = self
@@ -75,6 +75,7 @@ impl HabiticaClient {
                 "https://habitica.com/api/v3/tasks/{task_id}/score/{direction}"
             ))
             .headers(self.construct_headers())
+            .header("content-length", 0)
             .send()
             .await?;
         match resp.status().as_u16() {
@@ -133,7 +134,7 @@ impl HabiticaClient {
     ) -> Result<Vec<String>, HabiticaError> {
         #[derive(Deserialize)]
         struct TaskMoveResp {
-            success: String,
+            success: bool,
             data: Vec<String>,
         }
         let resp = self
@@ -142,6 +143,7 @@ impl HabiticaClient {
                 "https://habitica.com/api/v3/tasks/{task_id}/move/to/{location}"
             ))
             .headers(self.construct_headers())
+            .header("content-length", 0)
             .send()
             .await?;
         match resp.status().as_u16() {
@@ -157,7 +159,7 @@ impl HabiticaClient {
     pub async fn get_task(&self, task_id: String) -> Result<Task, HabiticaError> {
         #[derive(Deserialize)]
         struct TaskResp {
-            success: String,
+            success: bool,
             data: Task,
         }
         let resp = self
@@ -179,17 +181,29 @@ impl HabiticaClient {
     pub async fn insert_todo(&self, alias: String, text: String) -> Result<Task, HabiticaError> {
         #[derive(Deserialize)]
         struct TaskResp {
-            success: String,
+            success: bool,
             data: Task,
+        }
+        #[derive(Serialize)]
+        struct TaskReq {
+            text: String,
+            #[serde(rename = "type")]
+            task_type: String,
+            alias: String,
         }
         let resp = self
             .client
             .post(format!("https://habitica.com/api/v3/tasks/user"))
             .headers(self.construct_headers())
+            .json(&TaskReq {
+                text,
+                task_type: String::from("todo"),
+                alias,
+            })
             .send()
             .await?;
         match resp.status().as_u16() {
-            200 => Ok(resp.json::<TaskResp>().await?.data),
+            201 => Ok(resp.json::<TaskResp>().await?.data),
             status => Err(HabiticaError::UnsuccessfulRequest(
                 status,
                 resp.text().await?,
@@ -214,28 +228,20 @@ impl Display for Direction {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Task {
     pub _id: String,
     pub text: Option<String>,
     pub frequency: Option<String>,
+    #[serde(rename = "type")]
     pub task_type: Option<String>,
     pub notes: Option<String>,
-    pub repeat: Option<TaskRepeat>,
+    pub repeat: Option<HashMap<String, bool>>,
     pub every_x: Option<i64>,
     pub next_due: Option<Vec<String>>,
     pub completed: Option<bool>,
     pub is_due: Option<bool>,
-    pub checklist: Option<TaskCheckList>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct TaskRepeat {
-    pub days: HashMap<String, bool>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct TaskCheckList {
-    pub list: Vec<TaskCheckListItem>,
+    pub checklist: Option<Vec<TaskCheckListItem>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

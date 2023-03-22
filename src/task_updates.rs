@@ -1,5 +1,4 @@
 use actix_web::web;
-use auth_service_api::response::User;
 use futures_util::{stream, stream_select, StreamExt};
 
 use actix_ws::{CloseCode, CloseReason, Message, ProtocolError};
@@ -75,10 +74,15 @@ pub async fn manage_updates_ws(
                     habitica_integration.api_key,
                 );
 
-                let tasks = habitica_client
+                let mut tasks = habitica_client
                     .get_user_tasks()
                     .await
                     .map_err(handlers::report_habitica_err)?;
+
+                // only keep live todos
+                tasks.retain(|x| {
+                    x.task_type.as_deref() == Some("todo") && x.completed == Some(false)
+                });
 
                 // create channel
                 let (updates_tx, updates_rx) = tokio::sync::broadcast::channel(1000);
@@ -139,7 +143,6 @@ pub async fn manage_updates_ws(
         }
     };
 
-
     enum TaskUpdateKind {
         // we need to send a heartbeat
         NeedToSendHeartbeat,
@@ -148,7 +151,6 @@ pub async fn manage_updates_ws(
         // we have to handle a broadcast from the server
         ServerUpdate(Result<WebsocketOp, BroadcastStreamRecvError>),
     }
-
 
     let mut last_heartbeat = Instant::now();
 
@@ -272,7 +274,9 @@ pub async fn handle_ws_client_op(
     {
         let mut lock = per_user_worker_data.lock().await;
         // add to habitica
-        let _ = post_operation(&lock.habitica_client, &lock.snapshot, op.kind.clone()).await;
+        post_operation(&lock.habitica_client, &lock.snapshot, op.kind.clone())
+            .await
+            .map_err(handlers::report_habitica_err)?;
         // apply operation
         apply_operation(&mut lock.snapshot, op.kind.clone());
         // broadcast
