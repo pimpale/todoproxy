@@ -79,10 +79,8 @@ pub async fn manage_updates_ws(
                     .await
                     .map_err(handlers::report_habitica_err)?;
 
-                // only keep live todos
-                tasks.retain(|x| {
-                    x.task_type.as_deref() == Some("todo") && x.completed == Some(false)
-                });
+                // only keep todos
+                tasks.retain(|x| x.task_type.as_deref() == Some("todo"));
 
                 // create channel
                 let (updates_tx, updates_rx) = tokio::sync::broadcast::channel(1000);
