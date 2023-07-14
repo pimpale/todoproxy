@@ -34,99 +34,11 @@ struct ConnectionState {
 
 pub async fn manage_updates_ws(
     data: web::Data<AppData>,
+    init_msg: WebsocketInitMessage,
     mut session: actix_ws::Session,
     msg_stream: actix_ws::MessageStream,
 ) {
     log::info!("connected");
-
-    let mut last_heartbeat = Instant::now();
-
-    enum TaskUpdateKind {
-        // we need to send a heartbeat
-        NeedToSendHeartbeat,
-        // we received a message from the client
-        ClientMessage(Result<Message, ProtocolError>),
-        // we have to handle a broadcast from the server
-        ServerUpdate(Result<WebsocketOp, BroadcastStreamRecvError>),
-    }
-
-    let heartbeat_stream = IntervalStream::new(tokio::time::interval(HEARTBEAT_INTERVAL))
-        .map(|_| TaskUpdateKind::NeedToSendHeartbeat);
-    let client_message_stream = msg_stream.map(|x| TaskUpdateKind::ClientMessage(x));
-
-    let mut joint_stream = stream_select!(heartbeat_stream, client_message_stream,);
-
-    let reason = loop {
-        match joint_stream.next().await.unwrap() {
-            // received message from WebSocket client
-            TaskUpdateKind::ClientMessage(Ok(msg)) => {
-                log::debug!("msg: {msg:?}");
-                match msg {
-                    Message::Text(text) => {
-                        // try to parse the json
-                        break serde_json::from_str::<WebsocketInitMessage>(&text)
-                            .map_err(handlers::report_serde_error)
-                            .map_err(|e| {
-                                Some(CloseReason {
-                                    code: CloseCode::Error,
-                                    description: Some(e.to_string()),
-                                })
-                            });
-                    }
-                    Message::Binary(_) => {
-                        break Err(Some(CloseReason {
-                            code: CloseCode::Unsupported,
-                            description: Some(String::from("Only text supported")),
-                        }));
-                    }
-                    Message::Close(_) => break Err(None),
-                    Message::Ping(bytes) => {
-                        last_heartbeat = Instant::now();
-                        let _ = session.pong(&bytes).await;
-                    }
-                    Message::Pong(_) => {
-                        last_heartbeat = Instant::now();
-                    }
-                    Message::Continuation(_) => {
-                        break Err(Some(CloseReason {
-                            code: CloseCode::Unsupported,
-                            description: Some(String::from("No support for continuation frame.")),
-                        }));
-                    }
-                    // no-op; ignore
-                    Message::Nop => {}
-                };
-            }
-            // client WebSocket stream error
-            TaskUpdateKind::ClientMessage(Err(err)) => {
-                log::error!("{}", err);
-                break Err(None);
-            }
-            // heartbeat interval ticked
-            TaskUpdateKind::NeedToSendHeartbeat => {
-                // if no heartbeat ping/pong received recently, close the connection
-                if Instant::now().duration_since(last_heartbeat) > CLIENT_TIMEOUT {
-                    log::info!("client has not sent heartbeat in over {CLIENT_TIMEOUT:?}");
-                    break Err(None);
-                }
-                // send heartbeat ping
-                let _ = session.ping(b"").await;
-            }
-            // got message from server (impossible)
-            TaskUpdateKind::ServerUpdate(u) => {}
-        }
-    };
-
-    // get request and otherwise disconnect
-    let init_msg = match reason {
-        Err(reason) => {
-            // attempt to close connection gracefully
-            let _ = session.close(reason).await;
-            log::info!("disconnected init");
-            return;
-        }
-        Ok(req) => req,
-    };
 
     // try block for app
     let maybe_per_user_worker_data: Result<
@@ -225,6 +137,21 @@ pub async fn manage_updates_ws(
         }
     };
 
+    enum TaskUpdateKind {
+        // we need to send a heartbeat
+        NeedToSendHeartbeat,
+        // we received a message from the client
+        ClientMessage(Result<Message, ProtocolError>),
+        // we have to handle a broadcast from the server
+        ServerUpdate(Result<WebsocketOp, BroadcastStreamRecvError>),
+    }
+
+    let mut last_heartbeat = Instant::now();
+
+    let heartbeat_stream = IntervalStream::new(tokio::time::interval(HEARTBEAT_INTERVAL))
+        .map(|_| TaskUpdateKind::NeedToSendHeartbeat);
+    let client_message_stream = msg_stream.map(|x| TaskUpdateKind::ClientMessage(x));
+
     // first emit the state set, then start producing actual things
     let server_update_stream = stream::once(async {
         Ok(WebsocketOp {
@@ -238,7 +165,11 @@ pub async fn manage_updates_ws(
     // pin stream
     tokio::pin!(server_update_stream);
 
-    let mut joint_stream = stream_select!(joint_stream, server_update_stream);
+    let mut joint_stream = stream_select!(
+        heartbeat_stream,
+        client_message_stream,
+        server_update_stream
+    );
 
     let reason = loop {
         match joint_stream.next().await.unwrap() {

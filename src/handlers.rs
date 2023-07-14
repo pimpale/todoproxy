@@ -8,6 +8,7 @@ use auth_service_api::response::{AuthError, User};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 
+use todoproxy_api::request;
 use todoproxy_api::response;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Display)]
@@ -104,9 +105,15 @@ pub async fn ws_task_updates(
     data: web::Data<AppData>,
     req: HttpRequest,
     stream: web::Payload,
+    query: web::Query<request::WebsocketInitMessage>,
 ) -> Result<impl Responder, Error> {
     let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
     // spawn websocket handler (and don't await it) so that the response is returned immediately
-    rt::spawn(task_updates::manage_updates_ws(data, session, msg_stream));
+    rt::spawn(task_updates::manage_updates_ws(
+        data,
+        query.into_inner(),
+        session,
+        msg_stream,
+    ));
     Ok(res)
 }
