@@ -329,9 +329,9 @@ fn apply_operation(
 
             // order
             let (start_pos, end_pos) = if pos1 <= pos2 {
-                (pos2, pos1)
-            } else {
                 (pos1, pos2)
+            } else {
+                (pos2, pos1)
             };
 
             // reverse between specified indexes
