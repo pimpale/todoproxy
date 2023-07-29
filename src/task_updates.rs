@@ -323,6 +323,24 @@ fn apply_operation(
                 live.insert(ins_pos, removed);
             }
         }
+        WebsocketOpKind::RevLiveTask { id1, id2 } => {
+            let pos1 = live.iter().position(|x| x.id == id1);
+            let pos2 = live.iter().position(|x| x.id == id2);
+
+            // order
+            let (start_pos, end_pos) = if pos1 <= pos2 {
+                (pos2, pos1)
+            } else {
+                (pos1, pos2)
+            };
+
+            // reverse between specified indexes
+            if let (Some(start_pos), Some(end_pos)) = (start_pos, end_pos) {
+                live.make_contiguous();
+                let (s, _) = live.as_mut_slices();
+                s[start_pos..=end_pos].reverse();
+            }
+        }
         WebsocketOpKind::FinishLiveTask { id, status } => {
             if let Some(pos_in_live) = live.iter().position(|x| x.id == id) {
                 finished.push_front(FinishedTask {
