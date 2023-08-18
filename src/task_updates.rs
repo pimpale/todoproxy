@@ -26,7 +26,7 @@ use crate::{handlers::AppError, AppData};
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// How long before lack of client response causes a timeout.
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct ConnectionState {
     user: User,
@@ -197,7 +197,6 @@ pub async fn manage_updates_ws(
                     }
                     Message::Close(_) => break None,
                     Message::Ping(bytes) => {
-                        last_heartbeat = Instant::now();
                         let _ = session.pong(&bytes).await;
                     }
                     Message::Pong(_) => {
