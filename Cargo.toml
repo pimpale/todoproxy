@@ -7,14 +7,14 @@ edition = "2021"
 
 [dependencies]
 actix-web = "4.3.1"
-clap = { version = "4.3.19", features = ["derive"] }
+clap = { version = "4.3.23", features = ["derive"] }
 deadpool-postgres = "0.10.5"
 env_logger = "0.10.0"
 futures-util = "0.3.28"
-log = "0.4.19"
+log = "0.4.20"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.104"
-tokio = { version = "1.29.1", features = ["full"] }
+serde_json = "1.0.105"
+tokio = { version = "1.32.0", features = ["full"] }
 tokio-postgres = "0.7.8"
 auth-service-api = {version = "*", git = "https://github.com/innexgo/auth-service-api", features=["client"]}
 todoproxy-api = {version = "*", git = "https://github.com/pimpale/todoproxy-api", branch="standalone"}
