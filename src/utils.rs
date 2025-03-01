@@ -1,4 +1,4 @@
-use rand::distributions::Alphanumeric;
+use rand::distr::Alphanumeric;
 use rand::Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
 

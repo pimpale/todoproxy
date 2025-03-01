@@ -282,8 +282,8 @@ pub async fn handle_ws_client_op(
 
 fn apply_operation(
     StateSnapshot {
-        ref mut finished,
-        ref mut live,
+        finished,
+        live,
     }: &mut StateSnapshot,
     op: WebsocketOpKind,
 ) {
