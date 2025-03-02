@@ -3,14 +3,15 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::{net::Ipv4Addr, sync::Arc};
 
-use actix_web::{middleware, web, App, HttpServer};
+use actix_cors::Cors;
+use actix_web::{App, HttpServer, middleware, web};
 use auth_service_api::response::User;
 use clap::Parser;
 
 use auth_service_api::client::AuthService;
 use todoproxy_api::{StateSnapshot, WebsocketOp};
-use tokio::sync::broadcast;
 use tokio::sync::Mutex;
+use tokio::sync::broadcast;
 
 mod db_types;
 mod handlers;
@@ -105,7 +106,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     };
 
     HttpServer::new(move || {
+        // Configure CORS middleware
+        let cors = Cors::permissive();
+        
         App::new()
+            // Add cors middleware before other middleware
+            .wrap(cors)
             // enable logger
             .wrap(middleware::Logger::default())
             // add data
@@ -114,7 +120,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
             .service(web::resource("/public/info").route(web::route().to(handlers::info)))
             // handle ws connection
             .service(
-                web::resource("/public/ws/task_updates").route(web::get().to(handlers::ws_task_updates)),
+                web::resource("/public/ws/task_updates")
+                    .route(web::get().to(handlers::ws_task_updates)),
             )
     })
     .bind((Ipv4Addr::LOCALHOST, port))?
