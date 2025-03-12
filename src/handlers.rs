@@ -8,8 +8,8 @@ use auth_service_api::response::{AuthError, User};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 
-use todoproxy_api::request;
-use todoproxy_api::response;
+use crate::api::request;
+use crate::api::response;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Display)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

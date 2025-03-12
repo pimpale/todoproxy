@@ -1,5 +1,5 @@
 use super::db_types::*;
-use todoproxy_api::WebsocketOp;
+use crate::api::WebsocketOp;
 use tokio_postgres::GenericClient;
 
 impl From<tokio_postgres::row::Row> for Operation {

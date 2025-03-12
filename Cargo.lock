@@ -1188,9 +1188,9 @@ dependencies = [
 
 [[package]]
 name = "num-traits"
-version = "0.2.18"
+version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da0df0e5185db44f69b44f26786fe401b6c293d1907744beaa7fa62b2e5a517a"
+checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
 ]
@@ -1883,26 +1883,15 @@ dependencies = [
  "env_logger",
  "futures-util",
  "log",
+ "num-derive",
+ "num-traits",
  "openssl",
  "rand 0.9.0",
  "serde",
  "serde_json",
- "todoproxy-api",
  "tokio",
  "tokio-postgres",
  "tokio-stream",
-]
-
-[[package]]
-name = "todoproxy-api"
-version = "0.0.1"
-source = "git+https://github.com/pimpale/todoproxy-api?branch=standalone#2f412c48c03aae1e8f29782d97f45006f2e0c562"
-dependencies = [
- "derive_more 0.99.19",
- "num-derive",
- "num-traits",
- "serde",
- "serde_json",
 ]
 
 [[package]]

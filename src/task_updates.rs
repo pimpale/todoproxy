@@ -1,24 +1,24 @@
 use actix_web::web;
 use auth_service_api::response::User;
-use futures_util::{stream, stream_select, StreamExt};
+use futures_util::{StreamExt, stream, stream_select};
 
+use crate::api::{
+    FinishedTask, LiveTask, StateSnapshot, WebsocketOp, WebsocketOpKind,
+    request::WebsocketInitMessage,
+};
 use actix_ws::{CloseCode, CloseReason, Message, ProtocolError};
 use std::{
-    collections::{hash_map::Entry, HashMap, VecDeque},
+    collections::{HashMap, VecDeque, hash_map::Entry},
     sync::Arc,
     time::{Duration, Instant},
 };
-use todoproxy_api::{
-    request::WebsocketInitMessage, FinishedTask, LiveTask, StateSnapshot, WebsocketOp,
-    WebsocketOpKind,
-};
-use tokio::sync::{broadcast::Receiver, Mutex};
-use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream, IntervalStream};
+use tokio::sync::{Mutex, broadcast::Receiver};
+use tokio_stream::wrappers::{BroadcastStream, IntervalStream, errors::BroadcastStreamRecvError};
 
 use crate::handlers::{self, get_user_if_api_key_valid};
-use crate::{checkpoint_service, operation_service, PerUserWorkerData};
+use crate::{AppData, handlers::AppError};
+use crate::{PerUserWorkerData, checkpoint_service, operation_service};
 use crate::{db_types, utils};
-use crate::{handlers::AppError, AppData};
 
 /// How often heartbeat pings are sent.
 ///
@@ -238,7 +238,10 @@ pub async fn manage_updates_ws(
                     let send_result = session.text(jsonval).await;
                     match send_result {
                         Ok(()) => (),
-                        Err(_) => break None,
+                        Err(_) => {
+                            log::info!("error sending message: connection to client closed");
+                            break None;
+                        }
                     }
                 }
                 Err(BroadcastStreamRecvError::Lagged(_)) => {}
@@ -280,32 +283,51 @@ pub async fn handle_ws_client_op(
     return Ok(());
 }
 
-fn apply_operation(
-    StateSnapshot {
-        finished,
-        live,
-    }: &mut StateSnapshot,
-    op: WebsocketOpKind,
-) {
+fn apply_operation(StateSnapshot { finished, live }: &mut StateSnapshot, op: WebsocketOpKind) {
     match op {
         WebsocketOpKind::OverwriteState(s) => {
             *live = s.live;
             *finished = s.finished;
         }
-        WebsocketOpKind::InsLiveTask { value, id } => {
-            live.push_front(LiveTask { id, value });
+        WebsocketOpKind::InsLiveTask {
+            value,
+            id,
+            deadline,
+        } => {
+            live.push_front(LiveTask {
+                id,
+                value,
+                managed: None,
+                deadline,
+            });
         }
         WebsocketOpKind::RestoreFinishedTask { id } => {
             // if it was found in the finished list, push it to the front
             if let Some(position) = finished.iter().position(|x| x.id == id) {
-                let FinishedTask { id, value, .. } = finished.remove(position).unwrap();
-                live.push_front(LiveTask { id, value });
+                let FinishedTask {
+                    id,
+                    value,
+                    managed,
+                    deadline,
+                    ..
+                } = finished.remove(position).unwrap();
+                live.push_front(LiveTask {
+                    id,
+                    value,
+                    managed,
+                    deadline,
+                });
             }
         }
-        WebsocketOpKind::EditLiveTask { id, value } => {
+        WebsocketOpKind::EditLiveTask {
+            id,
+            value,
+            deadline,
+        } => {
             for x in live.iter_mut() {
                 if x.id == id {
                     x.value = value;
+                    x.deadline = deadline;
                     break;
                 }
             }
@@ -342,10 +364,13 @@ fn apply_operation(
         }
         WebsocketOpKind::FinishLiveTask { id, status } => {
             if let Some(pos_in_live) = live.iter().position(|x| x.id == id) {
+                let task = live.remove(pos_in_live).unwrap();
                 finished.push_front(FinishedTask {
                     id,
-                    value: live.remove(pos_in_live).unwrap().value,
+                    value: task.value,
+                    managed: task.managed,
                     status,
+                    deadline: task.deadline,
                 });
             }
         }

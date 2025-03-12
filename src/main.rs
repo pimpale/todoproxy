@@ -1,4 +1,15 @@
 #![feature(try_blocks)]
+mod db_types;
+mod handlers;
+mod task_updates;
+mod utils;
+mod api;
+
+mod checkpoint_service;
+mod operation_service;
+
+
+
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::{net::Ipv4Addr, sync::Arc};
@@ -9,17 +20,9 @@ use auth_service_api::response::User;
 use clap::Parser;
 
 use auth_service_api::client::AuthService;
-use todoproxy_api::{StateSnapshot, WebsocketOp};
+use api::{StateSnapshot, WebsocketOp};
 use tokio::sync::Mutex;
 use tokio::sync::broadcast;
-
-mod db_types;
-mod handlers;
-mod task_updates;
-mod utils;
-
-mod checkpoint_service;
-mod operation_service;
 
 static SERVICE: &'static str = "todoproxy";
 static VERSION_MAJOR: i64 = 0;

@@ -1,5 +1,5 @@
 use super::db_types::*;
-use todoproxy_api::StateSnapshot;
+use crate::api::StateSnapshot;
 use tokio_postgres::GenericClient;
 
 impl From<tokio_postgres::row::Row> for Checkpoint {
